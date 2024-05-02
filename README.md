@@ -1,4 +1,4 @@
-# discord-sounboard-bot
+# discord-soundboard-bot
 A simple, unlimited audio track soundboard for discord, proxied via bot in voice channel.
 
 # Overview
