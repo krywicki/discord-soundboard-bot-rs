@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
 
     // framework configuration
     let token = env::var("DISCORD_TOKEN").expect("Missing DISCORD_TOKEN in environment");
-    let prefix = env::var("DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX").unwrap_or("!".into());
+    let prefix = env::var("DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX").unwrap_or("sb:".into());
 
     let framework = StandardFramework::new().group(&GENERAL_GROUP);
     framework.configure(Configuration::new().prefix(prefix.as_str()));
@@ -337,7 +337,7 @@ fn list_audio_track_names() -> Vec<String> {
 
 fn list_audio_track_names_markdown() -> String {
     let audio_track_names = list_audio_track_names();
-    let command_prefix = env::var("DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX").unwrap_or("!".into());
+    let command_prefix = env::var("DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX").unwrap_or("sb:".into());
 
     let left_zero_pad = audio_track_names.len().to_string().len();
 
