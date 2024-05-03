@@ -6,7 +6,10 @@ use std::{env, fs};
 use env_logger;
 use log;
 use reqwest::Client as HttpClient;
-use serenity::all::{ApplicationId, GuildId};
+use serenity::all::{
+    ApplicationId, CreateActionRow, CreateButton, CreateEmbed, CreateMessage, Embed, GuildId,
+    Interaction,
+};
 use serenity::client::Context;
 use serenity::model::channel;
 use serenity::{
@@ -102,10 +105,17 @@ impl EventHandler for Handler {
             version = ready.version
         );
     }
+
+    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        match interaction {
+            Interaction::Component(component) => {}
+            _ => {}
+        }
+    }
 }
 
 #[group]
-#[commands(ping, join, leave, play, list)]
+#[commands(ping, join, leave, play, list, sounds)]
 struct General;
 
 #[command]
@@ -256,6 +266,32 @@ async fn list(ctx: &Context, msg: &Message) -> CommandResult {
     Ok(())
 }
 
+#[command]
+#[only_in(guilds)]
+async fn sounds(ctx: &Context, msg: &Message) -> CommandResult {
+    let audio_tracks = list_audio_track_names();
+
+    let buttons = vec![CreateButton::new(&audio_tracks[0]).label(&audio_tracks[0])];
+    let buttons = CreateActionRow::Buttons(buttons);
+
+    let mut embed = CreateEmbed::new().title("Soundboard Sounds").field(
+        "embed field",
+        "embed field value",
+        true,
+    );
+
+    let builder = CreateMessage::new()
+        .add_embed(embed)
+        .components(vec![buttons]);
+    check_msg(msg.channel_id.send_message(&ctx.http, builder).await);
+
+    //embed.check_msg(msg.reply(ctx, embed.into()).await);
+
+    //check_msg(msg.reply(ctx, audio_tracks_md).await);
+
+    Ok(())
+}
+
 struct TrackErrorNotifier;
 
 #[async_trait]
@@ -343,18 +379,10 @@ fn list_audio_track_names_markdown() -> String {
     let audio_track_names = list_audio_track_names();
     let command_prefix = env::var("DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX").unwrap_or("sb:".into());
 
-    let left_zero_pad = audio_track_names.len().to_string().len();
-
-    // let audio_tracks_md = audio_track_names
-    //     .iter()
-    //     .enumerate()
-    //     .map(|(index, track)| format!("- {:0>pad$}: {}\n", index, track, pad = left_zero_pad,))
-    //     .collect();
     let audio_tracks_md = audio_track_names
         .iter()
         .map(|track| format!("- {command_prefix}play {track}\n"))
         .collect();
 
-    log::debug!("Audio tracks markdown\n{}", audio_tracks_md);
     audio_tracks_md
 }
