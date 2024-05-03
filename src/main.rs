@@ -30,6 +30,8 @@ use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, T
 use songbird::SerenityInit;
 use symphonia::core::audio;
 
+mod vars;
+
 struct HttpKey;
 
 impl TypeMapKey for HttpKey {
@@ -41,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Application starting...");
 
     // dotenv file and log init
-    let env_file = env::var("DISCORD_SOUNDBOARD_BOT_DOTENV_FILE").unwrap_or(".env".into());
+    let env_file: String = vars::get(vars::DISCORD_BOT_DOTENV_FILE);
     let dotenv_loaded = dotenv::from_filename(env_file.as_str()).is_ok();
     env_logger::init();
 
@@ -50,17 +52,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // framework configuration
-    let token = env::var("DISCORD_TOKEN").expect("Missing DISCORD_TOKEN in environment");
-    let prefix = env::var("DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX").unwrap_or("sb:".into());
+    let token: String = vars::get(vars::DISCORD_BOT_TOKEN);
+    let prefix: String = vars::get(vars::DISCORD_BOT_COMMAND_PREFIX);
 
     let framework = StandardFramework::new().group(&GENERAL_GROUP);
     framework.configure(Configuration::new().prefix(prefix.as_str()));
 
     // client setup
     let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
-    let application_id: u64 = env::var("DISCORD_APPLICATION_ID")
-        .expect("Missing DISCORD_APPLICATION_ID env var")
-        .parse()?;
+    let application_id: u64 = vars::get(vars::DISCORD_BOT_APPLICATION_ID);
 
     let mut client = Client::builder(&token, intents)
         .application_id(ApplicationId::new(application_id))
@@ -326,7 +326,7 @@ fn check_msg(result: SerenityResult<Message>) {
 }
 
 fn find_audio_track(name: &String) -> Option<songbird::input::File<impl AsRef<Path>>> {
-    let audio_dir = env::var("DISCORD_SOUNDBOARD_BOT_AUDIO_DIR").unwrap_or("./audio".into());
+    let audio_dir: String = vars::get(vars::DISCORD_BOT_AUDIO_DIR);
     let audio_file = format!("{}.mp3", name);
 
     let audio_file_path = path::Path::new(&audio_dir).join(&audio_file);
@@ -343,9 +343,9 @@ fn find_audio_track(name: &String) -> Option<songbird::input::File<impl AsRef<Pa
 }
 
 fn list_audio_track_names() -> Vec<String> {
-    let audio_dir = env::var("DISCORD_SOUNDBOARD_BOT_AUDIO_DIR").unwrap_or("./audio".into());
+    let audio_dir: String = vars::get(vars::DISCORD_BOT_AUDIO_DIR);
 
-    log::debug!("DISCORD_SOUNDBOARD_BOT_AUDIO_DIR: {audio_dir}");
+    log::debug!("DISCORD_BOT_AUDIO_DIR: {audio_dir}");
 
     let audio_tracks: Vec<String> = match fs::read_dir(&audio_dir) {
         Ok(entries) => {
@@ -377,7 +377,7 @@ fn list_audio_track_names() -> Vec<String> {
 
 fn list_audio_track_names_markdown() -> String {
     let audio_track_names = list_audio_track_names();
-    let command_prefix = env::var("DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX").unwrap_or("sb:".into());
+    let command_prefix: String = vars::get(vars::DISCORD_BOT_COMMAND_PREFIX);
 
     let audio_tracks_md = audio_track_names
         .iter()
