@@ -311,19 +311,23 @@ fn list_audio_track_names() -> Vec<String> {
 
     log::debug!("DISCORD_SOUNDBOARD_BOT_AUDIO_DIR: {audio_dir}");
 
-    let audio_tracks = match fs::read_dir(&audio_dir) {
-        Ok(entries) => entries
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-            .map(|e| {
-                let p = e.path();
-                let os_path = p.file_name().unwrap();
-                os_path.to_str().unwrap().to_string()
-            })
-            .filter(|e| e.ends_with(".mp3"))
-            .map(|e| e.strip_suffix(".mp3").unwrap().to_string())
-            //.map(|e| String::from(e.to_str().unwrap()))
-            .collect(),
+    let audio_tracks: Vec<String> = match fs::read_dir(&audio_dir) {
+        Ok(entries) => {
+            let mut tracks: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file())
+                .map(|e| {
+                    let p = e.path();
+                    let os_path = p.file_name().unwrap();
+                    os_path.to_str().unwrap().to_string()
+                })
+                .filter(|e| e.ends_with(".mp3"))
+                .map(|e| e.strip_suffix(".mp3").unwrap().to_string())
+                //.map(|e| String::from(e.to_str().unwrap()))
+                .collect::<Vec<String>>();
+            tracks.sort();
+            tracks
+        }
         Err(err) => {
             log::error!("Failed to read audio tracks at dir: {audio_dir}");
             vec![]
