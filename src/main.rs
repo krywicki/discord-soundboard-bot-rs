@@ -7,10 +7,11 @@ use env_logger;
 use log;
 use reqwest::Client as HttpClient;
 use serenity::all::{
-    ApplicationId, CreateActionRow, CreateButton, CreateEmbed, CreateMessage, Embed, GuildId,
-    Interaction,
+    ApplicationId, ChannelId, ComponentInteractionDataKind, CreateActionRow, CreateButton,
+    CreateEmbed, CreateInteractionResponse, CreateMessage, Embed, GuildId, Interaction,
 };
 use serenity::client::Context;
+use serenity::json::to_string;
 use serenity::model::channel;
 use serenity::{
     async_trait,
@@ -27,10 +28,14 @@ use serenity::{
     Result as SerenityResult,
 };
 use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
+use songbird::tracks::{PlayMode, TrackHandle, TrackState};
 use songbird::SerenityInit;
 use symphonia::core::audio;
 
 mod vars;
+
+const PLAY: &str = "play";
+const SEP: &str = "::"; // id separator (e.g. 'play::welcome-to-the-jungle')
 
 struct HttpKey;
 
@@ -107,9 +112,69 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        log::debug!("Interaction rx'd");
         match interaction {
-            Interaction::Component(component) => {}
+            Interaction::Component(component) => match component.data.kind {
+                ComponentInteractionDataKind::Button => {
+                    log::debug!("Interaction Component Button pressed");
+                    let custom_id = &component.data.custom_id;
+                    match ButtonCustomId::try_from(custom_id.clone()) {
+                        Ok(custom_id) => match custom_id {
+                            ButtonCustomId::PlayAudio(audio_track) => {
+                                log::debug!("Play Audio Button Pressed - '{}'", audio_track);
+                                let channel_id = &component.channel_id;
+                                let guild_id = component.guild_id.unwrap();
+                                play_audio_track(&ctx, &channel_id, guild_id, &audio_track).await;
+                            }
+                            _ => {
+                                log::error!("ButtonCustomId not handled! - {:?}", custom_id);
+                            }
+                        },
+                        Err(err) => {
+                            log::error!("Failed to parse custom id - {}", err);
+                            check_msg(
+                                component
+                                    .channel_id
+                                    .say(&ctx.http, "Sorry. I don't recognize this button.")
+                                    .await,
+                            );
+                        }
+                    }
+
+                    component
+                        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+                        .await;
+                }
+
+                _ => {}
+            },
             _ => {}
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ButtonCustomId {
+    PlayAudio(String),
+}
+
+impl Into<String> for ButtonCustomId {
+    fn into(self) -> String {
+        match self {
+            Self::PlayAudio(audio) => format!("play{SEP}{}", audio),
+        }
+    }
+}
+
+impl TryFrom<String> for ButtonCustomId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let parts: Vec<_> = value.split("::").collect();
+
+        match parts[0] {
+            "play" => Ok(ButtonCustomId::PlayAudio(parts[1].into())),
+            _ => Err(format!("Cannot identify ButtonCustomId: {value}")),
         }
     }
 }
@@ -178,6 +243,11 @@ async fn join(ctx: &Context, msg: &Message) -> CommandResult {
         }
     }
 
+    let join_audio: String = vars::get(vars::DISCORD_BOT_JOIN_AUDIO);
+    if join_audio.len() > 0 {
+        log::debug!("bot join audio enabled - song: {}", join_audio);
+        play_audio_track(&ctx, &channel_id.unwrap(), guild_id, &join_audio).await;
+    }
     Ok(())
 }
 
@@ -187,21 +257,45 @@ async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
     let guild_id = msg.guild_id.unwrap();
     let manager = songbird_get(&ctx).await;
 
-    let has_handler = manager.get(guild_id).is_some();
+    let handler = manager.get(guild_id);
+    let channel_id = &msg.channel_id;
 
-    if has_handler {
-        match manager.remove(guild_id).await {
-            Ok(_) => check_msg(msg.channel_id.say(&ctx.http, "Left voice channel").await),
-            Err(e) => {
-                check_msg(
-                    msg.channel_id
-                        .say(&ctx.http, format!("Failed {:?}", e))
-                        .await,
-                );
+    match handler {
+        Some(handler) => {
+            let leave_audio: String = vars::get(vars::DISCORD_BOT_LEAVE_AUDIO);
+            if leave_audio.len() > 0 {
+                log::debug!("bot leave audio enabled - song: {}", leave_audio);
+                match play_audio_track(&ctx, &channel_id, guild_id, &leave_audio).await {
+                    Some(track_handle) => loop {
+                        match track_handle.get_info().await {
+                            Ok(state) => match state.playing {
+                                PlayMode::Play => {
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(250))
+                                        .await
+                                }
+                                _ => {}
+                            },
+                            Err(_) => break,
+                        }
+                    },
+                    None => {}
+                }
+            }
+
+            match manager.remove(guild_id).await {
+                Ok(_) => check_msg(msg.channel_id.say(&ctx.http, "Left voice channel").await),
+                Err(e) => {
+                    check_msg(
+                        msg.channel_id
+                            .say(&ctx.http, format!("Failed {:?}", e))
+                            .await,
+                    );
+                }
             }
         }
-    } else {
-        check_msg(msg.reply(ctx, "Not in a voice channel").await);
+        None => {
+            check_msg(msg.reply(ctx, "Not in a voice channel").await);
+        }
     }
 
     Ok(())
@@ -211,9 +305,10 @@ async fn leave(ctx: &Context, msg: &Message) -> CommandResult {
 #[only_in(guilds)]
 async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     let guild_id = msg.guild_id.unwrap();
+    let channel_id = &msg.channel_id;
     let manager = songbird_get(&ctx).await;
 
-    let audio_track_name = match args.single::<String>() {
+    let audio_track = match args.single::<String>() {
         Ok(name) => name.trim().to_string(),
         Err(_) => {
             log::error!("Missing audio track name in play command");
@@ -226,32 +321,7 @@ async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         }
     };
 
-    match manager.get(guild_id) {
-        Some(handler_lock) => {
-            let mut handler = handler_lock.lock().await;
-
-            match find_audio_track(&audio_track_name) {
-                Some(audio_track_input) => {
-                    handler.play_input(audio_track_input.into());
-
-                    check_msg(msg.channel_id.say(&ctx.http, "Playing track").await);
-                    log::info!("Playing track {}", audio_track_name);
-                }
-                None => {
-                    log::error!("Audio track does not exist - {}", audio_track_name);
-                    check_msg(
-                        msg.channel_id
-                            .say(
-                                &ctx.http,
-                                format!("Cannot locate audio track: '{}'", audio_track_name),
-                            )
-                            .await,
-                    );
-                }
-            }
-        }
-        None => {}
-    }
+    play_audio_track(&ctx, &channel_id, guild_id, &audio_track).await;
 
     Ok(())
 }
@@ -271,23 +341,38 @@ async fn list(ctx: &Context, msg: &Message) -> CommandResult {
 async fn sounds(ctx: &Context, msg: &Message) -> CommandResult {
     let audio_tracks = list_audio_track_names();
 
-    let buttons = vec![CreateButton::new(&audio_tracks[0]).label(&audio_tracks[0])];
-    let buttons = CreateActionRow::Buttons(buttons);
+    let mut action_grids: Vec<Vec<CreateActionRow>> = vec![];
 
-    let mut embed = CreateEmbed::new().title("Soundboard Sounds").field(
-        "embed field",
-        "embed field value",
-        true,
-    );
+    for grid in audio_tracks.chunks(25) {
+        // NOTE: ActionRows: Have a 5x5 grid limit
+        //  (https://discordjs.guide/message-components/action-rows.html#action-rows)
+        let mut action_rows = vec![];
+        for audio_tracks_row in grid.chunks(5) {
+            let mut buttons = vec![];
+            for audio_track in audio_tracks_row {
+                // create label (will be truncated if over 20 chars)
+                let label = if audio_track.len() > 20 {
+                    format!("{}...", audio_track[0..17].to_string())
+                } else {
+                    format!("{:<width$}", audio_track, width = 20 - audio_track.len())
+                };
 
-    let builder = CreateMessage::new()
-        .add_embed(embed)
-        .components(vec![buttons]);
-    check_msg(msg.channel_id.send_message(&ctx.http, builder).await);
+                let button =
+                    CreateButton::new(ButtonCustomId::PlayAudio(audio_track.clone())).label(label);
 
-    //embed.check_msg(msg.reply(ctx, embed.into()).await);
+                buttons.push(button);
+            }
 
-    //check_msg(msg.reply(ctx, audio_tracks_md).await);
+            action_rows.push(CreateActionRow::Buttons(buttons));
+        }
+
+        action_grids.push(action_rows);
+    }
+
+    for action_grid in action_grids {
+        let builder = CreateMessage::new().components(action_grid);
+        check_msg(msg.channel_id.send_message(&ctx.http, builder).await);
+    }
 
     Ok(())
 }
@@ -385,4 +470,49 @@ fn list_audio_track_names_markdown() -> String {
         .collect();
 
     audio_tracks_md
+}
+
+async fn play_audio_track(
+    ctx: &Context,
+    channel_id: &ChannelId,
+    guild_id: GuildId,
+    audio_track: &String,
+) -> Option<TrackHandle> {
+    log::debug!("Starting to play_audio_track - {}", audio_track);
+    let manager = songbird_get(&ctx).await;
+
+    match manager.get(guild_id) {
+        Some(handler_lock) => {
+            let mut handler = handler_lock.lock().await;
+
+            match find_audio_track(&audio_track) {
+                Some(audio_track_input) => {
+                    let track_handle = handler.play_input(audio_track_input.into());
+
+                    check_msg(channel_id.say(&ctx.http, "Playing track").await);
+                    log::info!("Playing track {}", audio_track);
+
+                    return Some(track_handle);
+                }
+                None => {
+                    log::error!("Audio track does not exist - {}", audio_track);
+                    check_msg(
+                        channel_id
+                            .say(
+                                &ctx.http,
+                                format!("Cannot locate audio track: '{}'", audio_track),
+                            )
+                            .await,
+                    );
+                }
+            }
+        }
+        None => {
+            log::error!(
+                "songbird manager could not find guild_id. Bot might not be in voice channel"
+            );
+        }
+    }
+
+    None
 }
