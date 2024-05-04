@@ -15,3 +15,4 @@ anyhow = { version = "*" }
 log = { version = "*" }
 env_logger = { version = "*" }
 reqwest = { version = "*" }
+openssl = { version = "*", features=["vendored"]}
