@@ -489,7 +489,8 @@ async fn play_audio_track(
                 Some(audio_track_input) => {
                     let track_handle = handler.play_input(audio_track_input.into());
 
-                    check_msg(channel_id.say(&ctx.http, "Playing track").await);
+                    // uncomment for discord track feedback
+                    //check_msg(channel_id.say(&ctx.http, "Playing track").await);
                     log::info!("Playing track {}", audio_track);
 
                     return Some(track_handle);
