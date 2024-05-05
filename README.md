@@ -30,11 +30,13 @@ The simple steps to using the soundboard-bot are as follows...
 
 ## Environment variables
 
-- `DISCORD_TOKEN` - The discord token. Available on the discord developer portal website.
-- `DISCORD_APPLICATION_ID` - Bot application ID. Available on the discord developer portal website.
-- `DISCORD_SOUNDBOARD_BOT_AUDIO_DIR` - **default**: `./audio` - The directory containing `.mp3` files to play.
-- `DISCORD_SOUNDBOARD_BOT_COMMAND_PREFIX` - **default**: `sb:` - The command prefix when communicating to the bot from a discord text channel.
-- `DISCORD_SOUNDBOARD_BOT_DOTENV_FILE` - **default**: `.env` - The dotenv file to load when launching the application
+- `DISCORD_BOT_TOKEN` - The discord token. Available on the discord developer portal website.
+- `DISCORD_BOT_APPLICATION_ID` - Bot application ID. Available on the discord developer portal website.
+- `DISCORD_BOT_AUDIO_DIR` - **default**: `./audio` - The directory containing `.mp3` files to play.
+- `DISCORD_BOT_COMMAND_PREFIX` - **default**: `sb:` - The command prefix when communicating to the bot from a discord text channel.
+- `DISCORD_BOT_DOTENV_FILE` - **default**: `.env` - The dotenv file to load when launching the application
+- `DISCORD_BOT_JOIN_AUDIO` - **default**: `{empty}` - The audio track to play when bot joins voice channel
+- `DISCORD_BOT_LEAVE_AUDIO` - **default**: `{empty}` - The audio track to play when bot leaves voice channel
 - `RUST_LOG` - Set log level for application (or speicific modules) in the application
   - Examples
     - `RUST_LOG=error`
