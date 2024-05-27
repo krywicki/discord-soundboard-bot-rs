@@ -15,4 +15,14 @@ anyhow = { version = "*" }
 log = { version = "*" }
 env_logger = { version = "*" }
 reqwest = { version = "*" }
-openssl = { version = "*", features=["vendored"]}
+openssl = { version = "*", features = ["vendored"] }
+r2d2 = "0.8.10"
+r2d2_sqlite = "0.24.0"
+rusqlite = { version = "0.31.0", features = [
+    "chrono",
+] } # identical to r2d2_sqlite rusqlite version, to enable chrono feature
+chrono = "0.4.38"
+poise = "0.6.1"
+config = "0.14.0"
+thiserror = "1.0.61"
+serde = { version = "1.0.203", features = ["derive"] }
