@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::{env, fs};
 
 use commands::{PoiseContext, PoiseResult};
+use db::{AudioTable, Table};
 use env_logger;
 use log;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -34,18 +35,20 @@ use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, T
 use songbird::tracks::{PlayMode, TrackHandle, TrackState};
 use songbird::SerenityInit;
 
-use crate::commands::{PoiseError, UserData};
-use crate::config::Config;
-use crate::helpers::ButtonCustomId;
-use crate::helpers::SongbirdHelper;
-
 mod audio;
 mod commands;
+mod common;
 mod config;
 mod db;
 mod errors;
 mod helpers;
 mod vars;
+
+use crate::commands::PoiseError;
+use crate::common::UserData;
+use crate::config::Config;
+use crate::helpers::ButtonCustomId;
+use crate::helpers::SongbirdHelper;
 
 type FrameworkContext<'a> = poise::FrameworkContext<'a, UserData, PoiseError>;
 
@@ -59,6 +62,10 @@ async fn main() -> anyhow::Result<()> {
     // framework configuration
     let token = config.token.clone();
     let cmd_prefix = config.command_prefix.clone();
+    let application_id = config.application_id;
+    let sqlite_db_file = config.sqlite_db_file.clone();
+    let db_manager = SqliteConnectionManager::file(sqlite_db_file);
+    let db_pool = r2d2::Pool::new(db_manager).expect("Failed to create sqlite connection pool");
 
     log::info!("Setting up framework...");
     let framework: poise::Framework<UserData, PoiseError> =
@@ -83,17 +90,16 @@ async fn main() -> anyhow::Result<()> {
             .setup(|ctx, _ready, framework| {
                 Box::pin(async move {
                     poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                    Ok(UserData::builder().config(config).build())
+                    Ok(UserData {
+                        config: config,
+                        db_pool: db_pool,
+                    })
                 })
             })
             .build();
 
     // client setup
     let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
-    let application_id: u64 = vars::env::get(vars::env::DISCORD_BOT_APPLICATION_ID);
-
-    let db_manager = SqliteConnectionManager::file("file.db");
-    let db_pool = r2d2::Pool::new(db_manager).unwrap();
 
     log::info!("Creating client...");
     let mut client = Client::builder(&token, intents)
@@ -101,7 +107,6 @@ async fn main() -> anyhow::Result<()> {
         .framework(framework)
         .register_songbird()
         .type_map_insert::<HttpKey>(HttpClient::new())
-        .type_map_insert::<db::DbKey>(db_pool)
         .await
         .expect("Error creating client");
 
@@ -166,6 +171,8 @@ async fn handle_ready(
         version = ready.version
     );
 
+    AudioTable::new(data.db_connection()).create_table();
+
     Ok(())
 }
 
@@ -189,9 +196,9 @@ async fn handle_interaction_create(
                             let guild_id = component.guild_id.unwrap();
 
                             let manager = helpers::songbird_get(ctx).await;
-                            manager
-                                .play_audio(guild_id, channel_id, audio_track)
-                                .await?;
+                            // manager
+                            //     .play_audio(guild_id, channel_id, audio_track)
+                            //     .await?;
                         }
                         _ => {
                             log::error!("ButtonCustomId not handled! - {:?}", custom_id);

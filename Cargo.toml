@@ -26,3 +26,4 @@ poise = "0.6.1"
 config = "0.14.0"
 thiserror = "1.0.61"
 serde = { version = "1.0.203", features = ["derive"] }
+regex = "1.10.4"

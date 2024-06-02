@@ -1,16 +1,20 @@
+use std::path;
 use std::sync::{Arc, Mutex};
 
 use r2d2_sqlite::rusqlite::Connection as DbConnection;
 use reqwest::Client as HttpClient;
-use serenity::all::{ChannelId, GuildId};
+use serenity::all::{ChannelId, CreateActionRow, CreateButton, GuildId};
 use serenity::async_trait;
 use serenity::{all::Message, client::Context, prelude::TypeMapKey, Result as SerenityResult};
 use songbird::tracks::TrackHandle;
 use songbird::{Songbird, SongbirdKey};
 
+use crate::audio;
 use crate::commands::{GenericError, PoiseContext, PoiseError, PoiseResult};
+use crate::config::Config;
+use crate::db::AudioTableRow;
 use crate::errors::AudioError;
-use crate::{audio, vars};
+use crate::vars;
 
 pub async fn songbird_get(ctx: &Context) -> Arc<songbird::Songbird> {
     songbird::get(ctx)
@@ -64,7 +68,24 @@ impl From<ButtonCustomId> for String {
     }
 }
 
-pub fn truncate_button_label(label: &String) -> String {
+pub trait ButtonLabel {
+    fn to_button_label(&self) -> String;
+}
+
+impl ButtonLabel for String {
+    fn to_button_label(&self) -> String {
+        truncate_button_label(&self)
+    }
+}
+
+impl ButtonLabel for &str {
+    fn to_button_label(&self) -> String {
+        truncate_button_label(&self)
+    }
+}
+
+pub fn truncate_button_label(label: impl AsRef<str>) -> String {
+    let label = label.as_ref();
     if label.len() > vars::BTN_LABEL_MAX_LEN {
         format!("{}...", label[0..(vars::BTN_LABEL_MAX_LEN - 3)].to_string())
     } else {
@@ -99,7 +120,7 @@ pub trait SongbirdHelper {
         &self,
         guild_id: GuildId,
         channel_id: ChannelId,
-        audio_track: &str,
+        audio_track: path::PathBuf,
     ) -> Result<TrackHandle, AudioError>;
 }
 
@@ -109,30 +130,75 @@ impl SongbirdHelper for Songbird {
         &self,
         guild_id: GuildId,
         channel_id: ChannelId,
-        audio_track: &str,
+        audio_track: path::PathBuf,
     ) -> Result<TrackHandle, AudioError> {
-        log::debug!("Starting to play_audio_track - {audio_track}");
+        log::debug!("Starting to play_audio_track - {audio_track:?}");
+
+        let audio_input = songbird::input::File::new(audio_track.clone());
 
         match self.get(guild_id) {
             Some(handler_lock) => {
                 let mut handler = handler_lock.lock().await;
 
-                match audio::find_audio_track(audio_track) {
-                    Some(audio_track_input) => {
-                        let track_handle = handler.play_input(audio_track_input.into());
-                        log::info!("Playing track {}", audio_track);
-
-                        return Ok(track_handle);
-                    }
-                    None => {
-                        return Err(AudioError::AudioTrackNotFound {
-                            track: "hello".into(), //audio_track.as_ref().to_string(),
-                        }
-                        .into());
-                    }
-                }
+                let track_handle = handler.play_input(audio_input.into());
+                log::info!("Playing track {audio_track:?}");
+                Ok(track_handle)
             }
             None => Err(AudioError::NotInVoiceChannel { guild_id: guild_id }),
         }
     }
+}
+
+#[async_trait]
+pub trait PoiseContextHelper<'a> {
+    fn config(&self) -> &Config;
+
+    fn find_audio_track(&self, name: &str)
+        -> Option<songbird::input::File<impl AsRef<path::Path>>>;
+
+    async fn songbird(&self) -> Arc<songbird::Songbird>;
+}
+
+#[async_trait]
+impl<'a> PoiseContextHelper<'a> for PoiseContext<'a> {
+    fn config(&self) -> &Config {
+        &self.data().config
+    }
+
+    fn find_audio_track(
+        &self,
+        name: &str,
+    ) -> Option<songbird::input::File<impl AsRef<path::Path>>> {
+        log::info!("Finding audio track by name - {name}");
+
+        let audio_dir = self.config().audio_dir.clone();
+        let audio_file_path = audio_dir.join(format!("{name}.mp3"));
+
+        if audio_file_path.exists() {
+            log::info!("Found audio track: {audio_file_path:?}");
+            Some(songbird::input::File::new(audio_file_path))
+        } else {
+            log::error!("No audio track at: {audio_file_path:?}");
+            None
+        }
+    }
+
+    async fn songbird(&self) -> Arc<songbird::Songbird> {
+        let data = self.serenity_context().data.read().await;
+        data.get::<SongbirdKey>()
+            .expect("Songbird voice client placed in at initialization")
+            .clone()
+    }
+}
+
+pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
+    let buttons: Vec<_> = audio_rows
+        .iter()
+        .map(|track| {
+            CreateButton::new(ButtonCustomId::PlayAudio(track.id.to_string()))
+                .label(track.name.to_button_label())
+        })
+        .collect();
+
+    CreateActionRow::Buttons(buttons)
 }

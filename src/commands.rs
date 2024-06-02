@@ -6,9 +6,14 @@ use serenity::{
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
-    audio::{self, play_audio_track, TrackHandleHelper},
+    audio::{self, play_audio_track, AudioFile, RemoveAudioFile, TrackHandleHelper},
+    common::{LogResult, UserData},
     config::Config,
-    helpers::{self, check_msg, poise_check_msg, poise_songbird_get, SongbirdHelper},
+    db::{self, AudioTable, AudioTableRowInsert, FtsCleanText},
+    helpers::{
+        self, check_msg, poise_check_msg, poise_songbird_get, ButtonCustomId, ButtonLabel,
+        PoiseContextHelper, SongbirdHelper,
+    },
     vars,
 };
 
@@ -16,37 +21,6 @@ pub type GenericError = Box<dyn std::error::Error + Send + Sync>;
 pub type PoiseError = GenericError;
 pub type PoiseContext<'a> = poise::Context<'a, UserData, PoiseError>;
 pub type PoiseResult = Result<(), PoiseError>;
-
-pub struct UserData {
-    pub config: Config,
-}
-
-impl UserData {
-    pub fn builder() -> UserDataBuilder {
-        UserDataBuilder(UserData::default())
-    }
-}
-
-impl Default for UserData {
-    fn default() -> Self {
-        Self {
-            config: Config::default(),
-        }
-    }
-}
-
-pub struct UserDataBuilder(UserData);
-
-impl UserDataBuilder {
-    pub fn config(mut self, value: Config) -> Self {
-        self.0.config = value;
-        self
-    }
-
-    pub fn build(self) -> UserData {
-        self.0
-    }
-}
 
 #[poise::command(prefix_command, guild_only)]
 pub async fn deafen(ctx: PoiseContext<'_>) -> PoiseResult {
@@ -131,13 +105,13 @@ pub async fn play(
 
     let guild_id = ctx.guild_id().ok_or("No guild id found")?;
     let channel_id = ctx.channel_id();
-    let manager = poise_songbird_get(&ctx).await;
+    let manager = ctx.songbird().await;
 
     let audio_track = audio_track.trim();
 
-    manager
-        .play_audio(guild_id, channel_id, &audio_track)
-        .await?;
+    // manager
+    //     .play_audio(guild_id, channel_id, &audio_track)
+    //     .await?;
     Ok(())
 }
 
@@ -152,35 +126,20 @@ pub async fn play(
 
 #[poise::command(prefix_command, guild_only)]
 pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
-    let audio_tracks = audio::list_audio_track_names();
+    log::info!("List sounds buttons as ActionRows grid...");
 
-    let mut action_grids: Vec<Vec<CreateActionRow>> = vec![];
+    let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
+        .page_limit(vars::ACTION_ROWS_LIMIT)
+        .build();
 
-    for grid in audio_tracks.chunks(25) {
-        // NOTE: ActionRows: Have a 5x5 grid limit
-        //  (https://discordjs.guide/message-components/action-rows.html#action-rows)
-        let mut action_rows = vec![];
-        for audio_tracks_row in grid.chunks(5) {
-            let mut buttons = vec![];
-            for audio_track in audio_tracks_row {
-                // create label (will be truncated if over 20 chars)
-                let label = helpers::truncate_button_label(audio_track);
+    for audio_rows in paginator {
+        let audio_rows = audio_rows.log_err()?;
+        let mut action_grid: Vec<Vec<CreateActionRow>> = vec![];
 
-                let button =
-                    CreateButton::new(helpers::ButtonCustomId::PlayAudio(audio_track.clone()))
-                        .label(label);
-
-                buttons.push(button);
-            }
-
-            action_rows.push(CreateActionRow::Buttons(buttons));
-        }
-
-        action_grids.push(action_rows);
-    }
-
-    for action_grid in action_grids {
-        let builder = CreateMessage::new().components(action_grid);
+        // ActionRows: Have a 5x5 grid limit
+        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
+        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
+        let builder = CreateMessage::new().components(btn_grid);
         check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
     }
 
@@ -192,10 +151,54 @@ pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
 //     Ok(())
 // }
 
-// #[poise::command(prefix_command, guild_only)]
-// async fn scan(ctx: PoiseContext<'_>, msg: &Message) -> PoiseResult {
-//     Ok(())
-// }
+#[poise::command(prefix_command, guild_only)]
+async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
+    log::info!("Scanning audio files...");
+
+    let mut audio_files: Vec<AudioFile> = ctx.data().read_audio_dir().into_iter().collect();
+    let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection()).build();
+
+    // ignore audio files already in database
+    for page in paginator {
+        let page = page.log_err()?;
+        for row in page {
+            audio_files.remove_audio_file(&row.audio_file);
+        }
+    }
+
+    // add remaining audio files not in database
+    log::info!(
+        "Scan found {} audio files to add to databse",
+        audio_files.len()
+    );
+    let mut inserted = 0;
+    let table = AudioTable::new(ctx.data().db_connection());
+    for audio_file in audio_files {
+        let audio_name = audio_file.audio_title();
+
+        let new_audio = AudioTableRowInsert {
+            name: audio_name.clone(),
+            tags: audio_file.file_stem().fts_clean(),
+            audio_file: audio_file,
+            created_at: chrono::Utc::now(),
+            author_id: None,
+            author_name: None,
+            author_global_name: None,
+        };
+
+        table
+            .insert_audio_row(new_audio)
+            .log_err()
+            .and_then(|val| {
+                inserted += 1;
+                Ok(())
+            })
+            .ok();
+    }
+
+    log::info!("Scan complete - added {inserted} new audio files");
+    Ok(())
+}
 
 #[poise::command(slash_command, prefix_command, guild_only)]
 pub async fn echo(
