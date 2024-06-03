@@ -103,7 +103,7 @@ impl IntoIterator for AudioDir {
 
     fn into_iter(self) -> Self::IntoIter {
         let entries = fs::read_dir(&self.dir_path).expect("Failed to fs::read_dir for AudioDir");
-        AudioDirIter(entries)
+        AudioDirIter(entries.into_iter())
     }
 }
 
@@ -116,7 +116,8 @@ impl std::iter::Iterator for AudioDirIter {
         let mut it = &mut self.0;
 
         it.filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_file() && entry.path().ends_with(".mp3"))
+            .filter(|entry| entry.path().is_file())
+            .filter(|entry| entry.path().extension().unwrap_or(OsStr::new("")) == "mp3")
             .map(|e| AudioFile(e.path()))
             .next()
     }
@@ -126,6 +127,14 @@ impl std::iter::Iterator for AudioDirIter {
 pub struct AudioFile(path::PathBuf);
 
 impl AudioFile {
+    pub fn new(p: path::PathBuf) -> Self {
+        Self(p)
+    }
+
+    pub fn as_path_buf(&self) -> path::PathBuf {
+        self.0.clone()
+    }
+
     /// get file name without file extension
     pub fn file_stem(&self) -> String {
         self.0

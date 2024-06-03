@@ -127,7 +127,6 @@ pub async fn play(
 #[poise::command(prefix_command, guild_only)]
 pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
     log::info!("List sounds buttons as ActionRows grid...");
-
     let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
         .page_limit(vars::ACTION_ROWS_LIMIT)
         .build();
@@ -152,7 +151,7 @@ pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
 // }
 
 #[poise::command(prefix_command, guild_only)]
-async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
+pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
     log::info!("Scanning audio files...");
 
     let mut audio_files: Vec<AudioFile> = ctx.data().read_audio_dir().into_iter().collect();

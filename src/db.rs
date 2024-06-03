@@ -86,7 +86,7 @@ pub fn fts_clean_text(text: impl AsRef<str>) -> String {
     let text = text.replace("'", "");
 
     // Replace all non alphanumeric & space chars with space char
-    let re = Regex::new(r"[^a-zA-Z0-9, ]").unwrap();
+    let re = Regex::new(r"[^a-zA-Z0-9 ]").unwrap();
     let text = re.replace_all(text.as_str(), " ");
 
     // Remove replace 2x or more space chars to single space char
@@ -271,9 +271,9 @@ impl Table for AudioTable {
                     tags VARCHAR(2048) NOT NULL,
                     audio_file VARCHAR(500) NOT NULL UNIQUE,
                     created_at VARCHAR(25) NOT NULL,
-                    user_id INTEGER,
-                    user_name VARCHAR(256),
-                    user_global_name VARCHAR(256)
+                    author_id INTEGER,
+                    author_name VARCHAR(256),
+                    author_global_name VARCHAR(256)
                 );
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts5_table_name} USING FTS5(
@@ -290,7 +290,7 @@ impl Table for AudioTable {
                         VALUES('delete', old.id, old.name, old.audio_file);
                 END;
 
-                CREATE TRIGGER {table_name}_update AFTER UPDATE ON {table_name} BEGIN
+                CREATE TRIGGER IF NOT EXISTS {table_name}_update AFTER UPDATE ON {table_name} BEGIN
                     INSERT INTO {fts5_table_name}({fts5_table_name}, rowid, name, audio_file)
                         VALUES('delete', old.id, old.name, old.audio_file);
 
@@ -309,6 +309,7 @@ impl Table for AudioTable {
     }
 }
 
+#[derive(Debug)]
 pub enum AudioTableOrderBy {
     CreatedAt,
     Id,
@@ -325,6 +326,7 @@ impl AudioTableOrderBy {
     }
 }
 
+#[derive(Debug)]
 pub struct AudioTablePaginator {
     conn: Connection,
     order_by: AudioTableOrderBy,
@@ -358,6 +360,8 @@ impl AudioTablePaginator {
         let row_iter = stmt
             .query_map([], |row| AudioTableRow::try_from(row))
             .map_err(|err| format!("Error in AudioTablePaginator - {err}"))?;
+
+        self.offset += self.page_limit;
 
         Ok(row_iter
             .filter_map(|row| match row {
@@ -432,6 +436,9 @@ impl Iterator for AudioTablePaginator {
 
 #[cfg(test)]
 mod tests {
+    use audio::AudioFile;
+    use rand::{distributions::Alphanumeric, Rng};
+
     use super::*;
 
     #[test]
@@ -445,12 +452,111 @@ mod tests {
 
         assert_eq!(
             "I like code",
-            fts_clean_text("I like !@#$%^&*(_){}[]/\\., code")
+            fts_clean_text(r"I like !@#$%^&*(_){}[]/\., code")
         );
 
         assert_eq!(
             "This is a single line",
             fts_clean_text("This\nis\na\nsingle\nline\n")
-        )
+        );
+    }
+
+    fn get_db_connection() -> Connection {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        db_pool.get().unwrap()
+    }
+
+    fn get_audio_table() -> AudioTable {
+        AudioTable::new(get_db_connection())
+    }
+
+    fn rand_alpha_num() -> String {
+        rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(7)
+            .map(char::from)
+            .collect()
+    }
+
+    fn make_audio_table_row_insert() -> AudioTableRowInsert {
+        AudioTableRowInsert {
+            audio_file: AudioFile::new(
+                path::Path::new(&format!("/tmp/{}.mp3", rand_alpha_num())).to_path_buf(),
+            ),
+            author_global_name: None,
+            name: rand_alpha_num().into(),
+            tags: rand_alpha_num().into(),
+            created_at: chrono::Utc::now(),
+            author_id: None,
+            author_name: None,
+        }
+    }
+
+    #[test]
+    fn create_table_test() {
+        let table = get_audio_table();
+        table.create_table(); // create table(s) & trigger(s)
+        table.create_table(); // ignore table(s) & triggers(s) already created
+    }
+
+    #[test]
+    fn drop_table_test() {
+        let table = get_audio_table();
+
+        table.drop_table(); // if no table(s) exist
+        table.create_table(); // make table(s)
+        table.drop_table(); // drop tables
+    }
+
+    #[test]
+    fn table_insert_audio_row_test() {
+        let table = get_audio_table();
+
+        table.create_table();
+        table
+            .insert_audio_row(make_audio_table_row_insert())
+            .unwrap();
+    }
+
+    #[test]
+    fn table_get_audio_row_test() {
+        let table = get_audio_table();
+        table.create_table();
+
+        let mut row_insert = make_audio_table_row_insert();
+        row_insert.name = "Test".into();
+        table.insert_audio_row(row_insert);
+
+        let row = table.find_audio_row(UniqueAudioTableCol::Name("Test".into()));
+        let row = row.unwrap();
+        assert_eq!(row.name, "Test".to_string());
+    }
+
+    #[test]
+    fn table_pagination_test() {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        let table = AudioTable::new(db_pool.get().unwrap());
+        table.create_table();
+
+        for _ in 0..3 {
+            table
+                .insert_audio_row(make_audio_table_row_insert())
+                .unwrap();
+        }
+
+        let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            .page_limit(2)
+            .build();
+
+        let page = paginator.next().unwrap().unwrap();
+        assert_eq!(page.len(), 2);
+
+        let page = paginator.next().unwrap().unwrap();
+        assert_eq!(page.len(), 1);
+
+        let page = paginator.next();
+        assert!(page.is_none());
     }
 }

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::{env, fs};
 
 use commands::{PoiseContext, PoiseResult};
+use common::LogResult;
 use db::{AudioTable, Table};
 use env_logger;
 use log;
@@ -81,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
                     commands::leave(),
                     commands::sounds(),
                     commands::play(),
+                    commands::scan(),
                 ],
                 event_handler: |ctx, event, framework, data| {
                     Box::pin(event_handler(ctx, event, framework, data))
@@ -182,61 +184,26 @@ async fn handle_interaction_create(
     framework: FrameworkContext<'_>,
     data: &UserData,
 ) -> PoiseResult {
+    log::info!("interaction create event");
     match interaction {
-        Interaction::Component(component) => match component.data.kind {
-            ComponentInteractionDataKind::Button => {
-                log::debug!("Interaction Component Button pressed");
-                let custom_id = &component.data.custom_id;
-                match helpers::ButtonCustomId::try_from(custom_id.clone()) {
-                    Ok(custom_id) => match custom_id {
-                        helpers::ButtonCustomId::PlayAudio(audio_track) => {
-                            log::debug!("Play Audio Button Pressed - '{}'", audio_track);
-                            let audio_track = audio_track.as_str();
-                            let channel_id = component.channel_id;
-                            let guild_id = component.guild_id.unwrap();
-
-                            let manager = helpers::songbird_get(ctx).await;
-                            // manager
-                            //     .play_audio(guild_id, channel_id, audio_track)
-                            //     .await?;
-                        }
-                        _ => {
-                            log::error!("ButtonCustomId not handled! - {:?}", custom_id);
-                        }
-                    },
-                    Err(err) => {
-                        log::error!("Failed to parse custom id - {}", err);
-                        helpers::check_msg(
-                            component
-                                .channel_id
-                                .say(&ctx.http, "Sorry. I don't recognize this button.")
-                                .await,
-                        );
-                    }
-                }
-
-                component
-                    .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-                    .await;
-            }
-
-            _ => {}
-        },
-        _ => {}
+        Interaction::Component(component) => {
+            handle_component_interaction(ctx, interaction, component, framework, data).await
+        }
+        _ => Ok(()),
     }
-
-    Ok(())
 }
 
 async fn handle_component_interaction(
     ctx: &Context,
-    interaction: &ComponentInteraction,
+    interaction: &Interaction,
+    component: &ComponentInteraction,
     framework: FrameworkContext<'_>,
     data: &UserData,
 ) -> PoiseResult {
-    match interaction.data.kind {
+    log::info!("component interaction event");
+    match component.data.kind {
         ComponentInteractionDataKind::Button => {
-            handle_btn_interaction(ctx, interaction, framework, data).await?
+            handle_btn_interaction(ctx, interaction, component, framework, data).await?
         }
         _ => {}
     }
@@ -246,30 +213,58 @@ async fn handle_component_interaction(
 
 async fn handle_btn_interaction(
     ctx: &Context,
-    interaction: &ComponentInteraction,
+    interaction: &Interaction,
+    component: &ComponentInteraction,
     framework: FrameworkContext<'_>,
     data: &UserData,
 ) -> PoiseResult {
     log::debug!("Interaction Component Button pressed");
-    let custom_id = &interaction.data.custom_id;
+    let custom_id = &component.data.custom_id;
 
-    match ButtonCustomId::from(custom_id.clone()) {
-        ButtonCustomId::PlayAudio(audio_track) => {
-            log::debug!("Play Audio Button Pressed - '{}'", audio_track);
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await;
 
-            let channel_id = interaction.channel_id;
-            let guild_id = interaction
+    match ButtonCustomId::try_from(custom_id.clone())? {
+        ButtonCustomId::PlayAudio(audio_track_id) => {
+            log::info!("Play Audio Button Pressed - '{custom_id}'");
+
+            let channel_id = component.channel_id;
+            let guild_id = component
                 .guild_id
-                .ok_or("ComponentInteraction.guild_id is None")?;
+                .ok_or("ComponentInteraction.guild_id is None")
+                .log_err()?;
 
-            let manager = helpers::songbird_get(&ctx).await;
-            audio::play_audio_track(manager, guild_id, channel_id, audio_track).await;
+            let table = data.audio_table();
+
+            match table.find_audio_row(db::UniqueAudioTableCol::Id(audio_track_id)) {
+                Some(audio_row) => {
+                    log::info!(
+                        "Found audio track. Name: {}, File: {}",
+                        audio_row.name,
+                        audio_row.audio_file.to_string_lossy()
+                    );
+
+                    let manager = helpers::songbird_get(&ctx).await;
+                    manager
+                        .play_audio(guild_id, channel_id, &audio_row.audio_file)
+                        .await;
+                }
+                None => {
+                    return Err(format!(
+                        "Unable to locate audio track for button custom id"
+                    )
+                    .into())
+                    .log_err();
+                }
+            }
         }
         ButtonCustomId::Unknown(value) => {
-            let err =
-                format!("Unrecognized button custom_id for component interaction. Value={value}");
-            log::error!("{err}");
-            return Err(err.into());
+            return Err(format!(
+                "Unrecognized button custom_id for component interaction. Value={value}"
+            )
+            .into())
+            .log_err();
         }
     }
 

@@ -1,3 +1,4 @@
+use std::num::ParseIntError;
 use std::path;
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +12,7 @@ use songbird::{Songbird, SongbirdKey};
 
 use crate::audio;
 use crate::commands::{GenericError, PoiseContext, PoiseError, PoiseResult};
+use crate::common::LogResult;
 use crate::config::Config;
 use crate::db::AudioTableRow;
 use crate::errors::AudioError;
@@ -45,16 +47,24 @@ pub fn poise_check_msg(result: Result<poise::ReplyHandle, serenity::Error>) {
 
 #[derive(Debug)]
 pub enum ButtonCustomId {
-    PlayAudio(String),
+    PlayAudio(i64),
     Unknown(String),
 }
 
-impl From<String> for ButtonCustomId {
-    fn from(value: String) -> Self {
+impl TryFrom<String> for ButtonCustomId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
         let parts: Vec<_> = value.split("::").collect();
         match parts[0] {
-            "play" => ButtonCustomId::PlayAudio(parts[1].into()),
-            _ => ButtonCustomId::Unknown(value),
+            "play" => {
+                let id: i64 = parts[1]
+                    .parse()
+                    .map_err(|e: ParseIntError| e.to_string())
+                    .log_err_op(|e| format!("Parse error on button custom id '{value}' - {e}"))?;
+                Ok(ButtonCustomId::PlayAudio(id))
+            }
+            _ => Ok(ButtonCustomId::Unknown(value)),
         }
     }
 }
@@ -120,7 +130,7 @@ pub trait SongbirdHelper {
         &self,
         guild_id: GuildId,
         channel_id: ChannelId,
-        audio_track: path::PathBuf,
+        audio_track: &audio::AudioFile,
     ) -> Result<TrackHandle, AudioError>;
 }
 
@@ -130,11 +140,11 @@ impl SongbirdHelper for Songbird {
         &self,
         guild_id: GuildId,
         channel_id: ChannelId,
-        audio_track: path::PathBuf,
+        audio_track: &audio::AudioFile,
     ) -> Result<TrackHandle, AudioError> {
         log::debug!("Starting to play_audio_track - {audio_track:?}");
 
-        let audio_input = songbird::input::File::new(audio_track.clone());
+        let audio_input = songbird::input::File::new(audio_track.as_path_buf());
 
         match self.get(guild_id) {
             Some(handler_lock) => {
@@ -195,7 +205,7 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
     let buttons: Vec<_> = audio_rows
         .iter()
         .map(|track| {
-            CreateButton::new(ButtonCustomId::PlayAudio(track.id.to_string()))
+            CreateButton::new(ButtonCustomId::PlayAudio(track.id))
                 .label(track.name.to_button_label())
         })
         .collect();
