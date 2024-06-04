@@ -28,6 +28,7 @@ thiserror = "1.0.61"
 serde = { version = "1.0.203", features = ["derive"] }
 regex = "1.10.4"
 futures = "0.3.30"
+uuid = "1.8.0"
 
 [dev-dependencies]
 rand = "0.8.5"

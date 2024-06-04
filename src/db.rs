@@ -153,17 +153,6 @@ impl AudioTable {
         Self { conn: connection }
     }
 
-    pub fn fuzzy_search(&self, val: impl AsRef<str>, limit: usize) -> Option<Vec<AudioTableRow>> {
-        let table_name = Self::TABLE_NAME;
-        let sql = format!(
-            "
-
-        "
-        );
-
-        None
-    }
-
     pub fn find_audio_row(&self, col: UniqueAudioTableCol) -> Option<AudioTableRow> {
         let table_name = Self::TABLE_NAME;
 

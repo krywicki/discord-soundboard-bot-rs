@@ -1,4 +1,4 @@
-use poise::command;
+use poise::{command, Modal};
 use serenity::{
     all::{
         CreateActionRow, CreateButton, CreateInteractionResponse,
@@ -25,6 +25,7 @@ pub type GenericError = Box<dyn std::error::Error + Send + Sync>;
 pub type PoiseError = GenericError;
 pub type PoiseContext<'a> = poise::Context<'a, UserData, PoiseError>;
 pub type PoiseResult = Result<(), PoiseError>;
+pub type PoiseAppContext<'a> = poise::ApplicationContext<'a, UserData, PoiseError>;
 
 #[poise::command(prefix_command, guild_only)]
 pub async fn deafen(ctx: PoiseContext<'_>) -> PoiseResult {
@@ -140,7 +141,7 @@ pub async fn play(
 //     Ok(())
 // }
 
-#[poise::command(prefix_command, guild_only)]
+#[poise::command(slash_command, prefix_command, guild_only, subcommands("add_sound"))]
 pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
     log::info!("List sounds buttons as ActionRows grid...");
     let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
@@ -229,6 +230,69 @@ pub async fn echo(
 #[poise::command(prefix_command, guild_only)]
 pub async fn register(ctx: PoiseContext<'_>) -> PoiseResult {
     poise::builtins::register_application_commands_buttons(ctx).await?;
+    Ok(())
+}
+
+#[derive(Debug, poise::Modal)]
+#[name = "Add Sound"]
+struct AddSoundModal {
+    #[name = "Name"] // Field name by default
+    #[placeholder = "Use The Force Luke"] // No placeholder by default
+    #[min_length = 5] // No length restriction by default (so, 1-4000 chars)
+    #[max_length = 500]
+    name: String,
+
+    #[name = "Tags"] // Field name by default
+    #[placeholder = "star Wars jedi luke skywalker force episode iv"] // No placeholder by default
+    #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
+    #[max_length = 1024]
+    tags: Option<String>,
+
+    #[name = "Audio URL"]
+    #[placeholder = "www.example.com/use-the-force.mp3"]
+    #[max_length = 2048]
+    url: String,
+}
+
+#[poise::command(slash_command, guild_only, rename = "add")]
+pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
+    let data = AddSoundModal::execute(ctx)
+        .await?
+        .ok_or("AddSoundModal not set")
+        .log_err()?;
+
+    log::info!("Adding sound. Name: {}, Url: {}", data.name, data.url);
+
+    let table = ctx.data.audio_table();
+    let row = table.find_audio_row(db::UniqueAudioTableCol::Name(data.name.clone()));
+
+    match row {
+        Some(_) => {
+            log::error!(
+                "Can't add sound. Sound already exists - name: {}",
+                data.name
+            );
+            poise_check_msg(ctx.reply("A sound by that name already exists").await);
+        }
+        None => {
+            let audio_file =
+                helpers::download_audio_url(&data.url, &ctx.data.config.audio_dir.as_path())
+                    .await?;
+
+            table
+                .insert_audio_row(AudioTableRowInsert {
+                    name: data.name.clone(),
+                    audio_file: audio_file,
+                    author_global_name: ctx.author().global_name.clone(),
+                    author_id: Some(ctx.author().id.into()),
+                    author_name: Some(ctx.author().name.clone()),
+                    tags: format!("{} {}", data.name, data.tags.unwrap_or("".into())).fts_clean(),
+                    created_at: chrono::Utc::now(),
+                })
+                .log_err()?;
+        }
+    }
+
     Ok(())
 }
 

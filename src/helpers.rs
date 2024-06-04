@@ -1,15 +1,24 @@
+use std::io::{Cursor, Write};
 use std::num::ParseIntError;
 use std::path;
 use std::sync::{Arc, Mutex};
 
+use futures::StreamExt;
 use r2d2_sqlite::rusqlite::Connection as DbConnection;
+use reqwest::header::HeaderValue;
 use reqwest::Client as HttpClient;
 use serenity::all::{ChannelId, CreateActionRow, CreateButton, GuildId};
 use serenity::async_trait;
 use serenity::{all::Message, client::Context, prelude::TypeMapKey, Result as SerenityResult};
 use songbird::tracks::TrackHandle;
 use songbird::{Songbird, SongbirdKey};
+use symphonia::core::codecs::CodecRegistry;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
+use crate::audio::AudioFile;
 use crate::commands::{GenericError, PoiseContext, PoiseError, PoiseResult};
 use crate::common::LogResult;
 use crate::config::Config;
@@ -244,7 +253,7 @@ pub async fn autocomplete_audio_track_name<'a>(
 
     let text = partial.fts_prepare_search();
     let fts5_table_name = db::AudioTable::FTS5_TABLE_NAME;
-    let sql = format!("SELECT name FROM {fts5_table_name} WHERE name MATCH '{text}' LIMIT {limit}");
+    let sql = format!("SELECT name FROM {fts5_table_name} WHERE tags MATCH '{text}' LIMIT {limit}");
     let mut stmt = connection
         .prepare(sql.as_str())
         .expect("Autocomplete sql invalid");
@@ -261,4 +270,71 @@ pub async fn autocomplete_audio_track_name<'a>(
             futures::stream::iter(vec![])
         }
     }
+}
+
+pub async fn download_audio_url(
+    url: impl AsRef<str>,
+    dest_dir: &path::Path,
+) -> Result<AudioFile, PoiseError> {
+    let url = url.as_ref();
+    log::info!("Downloading audio url - {url}");
+
+    let client = reqwest::Client::new();
+
+    // HEAD request to ensure Content-Type == 'audio/mpeg'
+    let resp = client
+        .head(url)
+        .send()
+        .await
+        .log_err_msg("Download audio url failed HTTP HEAD")?;
+
+    let response = reqwest::get(url).await?;
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .unwrap();
+
+    match content_type.to_str().unwrap_or("") {
+        "audio/mpeg" | "audio/mpeg3" | "x-mpeg-3" => {}
+        val => {
+            return Err(
+                format!("Invalid content type: {val} for url. Expected 'audio/mpeg'",).into(),
+            )
+            .log_err();
+        }
+    }
+    if content_type != "audio/mpeg" {}
+
+    // Create uuid audio file in /tmp directory
+    let uuid = uuid::Uuid::new_v4();
+    let mut encode_buf = uuid::Uuid::encode_buffer();
+    let uuid = uuid.hyphenated().encode_lower(&mut encode_buf);
+
+    let file_name = format!("{uuid}.mp3");
+    let audio_file_path = std::env::temp_dir().join(file_name.as_str());
+    let mut file = std::fs::File::create(audio_file_path.as_path())?;
+
+    // Download audio file
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .log_err_msg("Failed HTTP GET on url")?;
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(item) = stream.next().await {
+        let chunk = item
+            .or(Err(format!("Error while downloading file")))
+            .log_err()?;
+
+        file.write_all(&chunk)
+            .or(Err(format!("Error while writing to file")))
+            .log_err()?;
+    }
+
+    // move audio file to destination directory
+    let final_audio_file_path = dest_dir.join(file_name.as_str());
+    std::fs::rename(&audio_file_path, &final_audio_file_path).log_err()?;
+    Ok(AudioFile::new(final_audio_file_path))
 }
