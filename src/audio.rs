@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::path;
 use std::sync::Arc;
 
+use chrono::{Duration, TimeDelta};
 use rusqlite::types::FromSql;
 use rusqlite::ToSql;
 use serenity::async_trait;
@@ -13,6 +14,11 @@ use serenity::{
 };
 use songbird::tracks::{PlayMode, TrackHandle};
 use songbird::Songbird;
+use symphonia::core::codecs::{self, CodecType, DecoderOptions};
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
 use crate::commands::PoiseContext;
 use crate::commands::PoiseError;
@@ -181,4 +187,68 @@ impl RemoveAudioFile for Vec<AudioFile> {
             self.remove(index);
         }
     }
+}
+
+pub struct AudioTrackInfo {
+    pub duration: TimeDelta,
+}
+pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrackInfo, PoiseError> {
+    let path = audio_file.as_ref();
+
+    log::info!("Probing audio-track: {}", path.to_string_lossy());
+
+    let file = std::fs::File::open(path).log_err()?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::default();
+    hint.with_extension("mp3");
+
+    // Use the default probe to identify the format
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .log_err_msg("Failed to probe format")?;
+
+    // Get the format reader
+    let mut format = probed.format;
+
+    // Get the default track
+    let track = format
+        .default_track()
+        .ok_or("No audio track found")
+        .log_err()?;
+
+    if track.codec_params.codec != codecs::CODEC_TYPE_MP3 {
+        return Err(format!(
+            "Invalid audio codec detected. Expected MP3({}), found {}",
+            codecs::CODEC_TYPE_MP3,
+            track.codec_params.codec
+        )
+        .into())
+        .log_err();
+    }
+
+    // Create a decoder for the track
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .log_err_msg("Failed to create audio decoder")?;
+
+    // Decode the packets and calculate the duration
+    let mut duration: f64 = 0.0;
+    while let Ok(packet) = format.next_packet() {
+        // Decode the packet
+        if let Ok(audio_buffer) = decoder.decode(&packet) {
+            // Add the duration of this packet
+            duration += audio_buffer.frames() as f64 / audio_buffer.spec().rate as f64;
+        }
+    }
+
+    let duration_ms = (duration * 1000.0) as i64;
+    log::info!("Audio track duration = {duration:.2} seconds");
+    Ok(AudioTrackInfo {
+        duration: Duration::milliseconds(duration_ms),
+    })
 }

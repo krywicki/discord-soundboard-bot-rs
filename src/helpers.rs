@@ -3,6 +3,7 @@ use std::num::ParseIntError;
 use std::path;
 use std::sync::{Arc, Mutex};
 
+use chrono::Duration;
 use futures::StreamExt;
 use r2d2_sqlite::rusqlite::Connection as DbConnection;
 use reqwest::header::HeaderValue;
@@ -285,6 +286,7 @@ async fn autocomplete_audio_track_names<'a>(
         }
     }
 
+    log::debug!("Auto complet partial search on {partial}");
     let text = partial.fts_prepare_search();
     let fts5_table_name = db::AudioTable::FTS5_TABLE_NAME;
     let sql = format!("SELECT name FROM {fts5_table_name} WHERE tags MATCH '{text}' LIMIT {limit}");
@@ -362,25 +364,36 @@ pub async fn download_audio_url(
 
     let file_name = format!("{uuid}.mp3");
     let audio_file_path = std::env::temp_dir().join(file_name.as_str());
-    let mut file = std::fs::File::create(audio_file_path.as_path())?;
 
-    // Download audio file
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .log_err_msg("Failed HTTP GET on url")?;
+    {
+        // Download audio file
+        let mut file = std::fs::File::create(audio_file_path.as_path())?;
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .log_err_msg("Failed HTTP GET on url")?;
 
-    let mut stream = response.bytes_stream();
+        let mut stream = response.bytes_stream();
+        while let Some(item) = stream.next().await {
+            let chunk = item
+                .or(Err(format!("Error while downloading file")))
+                .log_err()?;
 
-    while let Some(item) = stream.next().await {
-        let chunk = item
-            .or(Err(format!("Error while downloading file")))
-            .log_err()?;
+            file.write_all(&chunk)
+                .or(Err(format!("Error while writing to file")))
+                .log_err()?;
+        }
+    }
 
-        file.write_all(&chunk)
-            .or(Err(format!("Error while writing to file")))
-            .log_err()?;
+    let track_info = audio::probe_audio_track(&audio_file_path)?;
+    if track_info.duration >= Duration::seconds(7) {
+        return Err(format!(
+            "Audio track is too long: {:.2} seconds. Max allowed duration is {} seconds",
+            (track_info.duration.num_milliseconds() as f64) / 1000.0,
+            7,
+        ))
+        .log_err()?;
     }
 
     // move audio file to destination directory
