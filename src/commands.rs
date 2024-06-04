@@ -1,6 +1,10 @@
 use poise::command;
 use serenity::{
-    all::{CreateActionRow, CreateButton, CreateMessage, Message},
+    all::{
+        CreateActionRow, CreateButton, CreateInteractionResponse,
+        CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateMessage,
+        Message,
+    },
     async_trait,
 };
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
@@ -9,7 +13,7 @@ use crate::{
     audio::{self, play_audio_track, AudioFile, RemoveAudioFile, TrackHandleHelper},
     common::{LogResult, UserData},
     config::Config,
-    db::{self, AudioTable, AudioTableRowInsert, FtsCleanText},
+    db::{self, AudioTable, AudioTableRowInsert, FtsText},
     helpers::{
         self, check_msg, poise_check_msg, poise_songbird_get, ButtonCustomId, ButtonLabel,
         PoiseContextHelper, SongbirdHelper,
@@ -98,20 +102,32 @@ pub async fn leave(ctx: PoiseContext<'_>) -> PoiseResult {
 #[poise::command(slash_command, prefix_command, guild_only)]
 pub async fn play(
     ctx: PoiseContext<'_>,
-    #[description = "Track to play"] audio_track: Option<String>,
+    #[rename = "track"]
+    #[description = "Track to play"]
+    #[autocomplete = "helpers::autocomplete_audio_track_name"]
+    audio_track_name: String,
 ) -> PoiseResult {
-    let audio_track = audio_track.unwrap_or("wet-fart".into());
-    log::info!("Playing audio track {audio_track}...");
+    log::info!("Playing audio track {audio_track_name}...");
 
+    let table = ctx.data().audio_table();
     let guild_id = ctx.guild_id().ok_or("No guild id found")?;
     let channel_id = ctx.channel_id();
     let manager = ctx.songbird().await;
 
-    let audio_track = audio_track.trim();
+    let row = table.find_audio_row(db::UniqueAudioTableCol::Name(audio_track_name.clone()));
+    match row {
+        Some(row) => {
+            poise_check_msg(ctx.reply(format!("Playing track {audio_track_name}")).await);
+            manager
+                .play_audio(guild_id, channel_id, &row.audio_file)
+                .await?;
+        }
+        None => poise_check_msg(
+            ctx.reply(format!("Audio Track '{audio_track_name}' not found"))
+                .await,
+        ),
+    }
 
-    // manager
-    //     .play_audio(guild_id, channel_id, &audio_track)
-    //     .await?;
     Ok(())
 }
 
@@ -207,6 +223,12 @@ pub async fn echo(
     let response = format!("Echo: '{}'", text.unwrap_or("".into()));
     poise_check_msg(ctx.say(response).await);
 
+    Ok(())
+}
+
+#[poise::command(prefix_command, guild_only)]
+pub async fn register(ctx: PoiseContext<'_>) -> PoiseResult {
+    poise::builtins::register_application_commands_buttons(ctx).await?;
     Ok(())
 }
 

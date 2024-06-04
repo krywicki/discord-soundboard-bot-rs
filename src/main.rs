@@ -11,9 +11,9 @@ use log;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Client as HttpClient;
 use serenity::all::{
-    ApplicationId, ChannelId, ComponentInteraction, ComponentInteractionDataKind, CreateActionRow,
-    CreateButton, CreateEmbed, CreateInteractionResponse, CreateMessage, Embed, FullEvent, GuildId,
-    Interaction,
+    ApplicationId, ChannelId, CommandInteraction, ComponentInteraction,
+    ComponentInteractionDataKind, CreateActionRow, CreateButton, CreateEmbed,
+    CreateInteractionResponse, CreateMessage, Embed, FullEvent, GuildId, Interaction,
 };
 use serenity::client::Context;
 use serenity::json::to_string;
@@ -83,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
                     commands::sounds(),
                     commands::play(),
                     commands::scan(),
+                    commands::register(),
                 ],
                 event_handler: |ctx, event, framework, data| {
                     Box::pin(event_handler(ctx, event, framework, data))
@@ -91,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
             })
             .setup(|ctx, _ready, framework| {
                 Box::pin(async move {
-                    poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                    //poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                     Ok(UserData {
                         config: config,
                         db_pool: db_pool,
@@ -141,10 +142,10 @@ async fn event_handler(
 ) -> PoiseResult {
     match event {
         FullEvent::Ready { data_about_bot } => {
-            handle_ready(ctx, data_about_bot, framework, data).await?
+            handle_ready(ctx, data_about_bot, framework, data).await?;
         }
         FullEvent::InteractionCreate { interaction } => {
-            handle_interaction_create(ctx, interaction, framework, data).await?
+            handle_interaction_create(ctx, interaction, framework, data).await?;
         }
         _ => {}
     }
@@ -184,13 +185,15 @@ async fn handle_interaction_create(
     framework: FrameworkContext<'_>,
     data: &UserData,
 ) -> PoiseResult {
-    log::info!("interaction create event");
+    //log::debug!("interaction create event - {interaction:?}");
     match interaction {
         Interaction::Component(component) => {
-            handle_component_interaction(ctx, interaction, component, framework, data).await
+            handle_component_interaction(ctx, interaction, component, framework, data).await?;
         }
-        _ => Ok(()),
+        _ => {}
     }
+
+    Ok(())
 }
 
 async fn handle_component_interaction(

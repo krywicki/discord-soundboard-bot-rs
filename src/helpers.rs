@@ -10,13 +10,13 @@ use serenity::{all::Message, client::Context, prelude::TypeMapKey, Result as Ser
 use songbird::tracks::TrackHandle;
 use songbird::{Songbird, SongbirdKey};
 
-use crate::audio;
 use crate::commands::{GenericError, PoiseContext, PoiseError, PoiseResult};
 use crate::common::LogResult;
 use crate::config::Config;
-use crate::db::AudioTableRow;
+use crate::db::{AudioTable, AudioTableRow, FtsText};
 use crate::errors::AudioError;
 use crate::vars;
+use crate::{audio, db};
 
 pub async fn songbird_get(ctx: &Context) -> Arc<songbird::Songbird> {
     songbird::get(ctx)
@@ -154,7 +154,7 @@ impl SongbirdHelper for Songbird {
                 log::info!("Playing track {audio_track:?}");
                 Ok(track_handle)
             }
-            None => Err(AudioError::NotInVoiceChannel { guild_id: guild_id }),
+            None => Err(AudioError::NotInVoiceChannel),
         }
     }
 }
@@ -211,4 +211,54 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
         .collect();
 
     CreateActionRow::Buttons(buttons)
+}
+
+pub async fn autocomplete_audio_track_name<'a>(
+    ctx: PoiseContext<'_>,
+    partial: &'a str,
+) -> impl futures::stream::Stream<Item = String> + 'a {
+    let connection = ctx.data().db_connection();
+    let limit = 5;
+
+    // low char query
+    if partial.len() < 3 {
+        log::debug!("low character auto complete: '{partial}'");
+        let table_name = AudioTable::TABLE_NAME;
+        let sql = format!("SELECT name FROM {table_name} ORDER BY created_at DESC LIMIT {limit}");
+        let mut stmt = connection
+            .prepare(sql.as_str())
+            .expect("Autocomplete low-char sql invalid");
+
+        let rows = stmt.query_map((), |row| row.get("name"));
+        match rows {
+            Ok(rows) => {
+                let rows: Vec<String> = rows.filter_map(|row| row.ok()).collect();
+                return futures::stream::iter(rows);
+            }
+            Err(err) => {
+                log::error!("Autocomplete low-char sql query error - {err}");
+                return futures::stream::iter(vec![]);
+            }
+        }
+    }
+
+    let text = partial.fts_prepare_search();
+    let fts5_table_name = db::AudioTable::FTS5_TABLE_NAME;
+    let sql = format!("SELECT name FROM {fts5_table_name} WHERE name MATCH '{text}' LIMIT {limit}");
+    let mut stmt = connection
+        .prepare(sql.as_str())
+        .expect("Autocomplete sql invalid");
+
+    let rows = stmt.query_map((), |row| row.get("name"));
+
+    match rows {
+        Ok(rows) => {
+            let rows: Vec<String> = rows.filter_map(|row| row.ok()).collect();
+            futures::stream::iter(rows)
+        }
+        Err(err) => {
+            log::error!("Autocomplete sql query error - {err}");
+            futures::stream::iter(vec![])
+        }
+    }
 }

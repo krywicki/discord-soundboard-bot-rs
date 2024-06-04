@@ -30,19 +30,43 @@ pub fn read_audio_dir(dir: &path::PathBuf) -> AudioDir {
     AudioDir::new(dir.clone())
 }
 
-pub trait LogResult<E> {
+pub trait LogResult<T, E> {
     /// Logs error message as `'{err}'` format, only on Err results. Returns Result
     fn log_err(self) -> Self;
     /// Calls op to create message for `log::error!()` only on Err results. Returns Result
     fn log_err_op(self, op: impl FnOnce(&E) -> String) -> Self;
     /// Logs error message as `'{msg} - {err}'` format, only on Err results. Returns Result
     fn log_err_msg(self, msg: impl AsRef<str>) -> Self;
+    /// Logs  ok message as `'{msg}'` format, only on Ok results. Returns Result
+    fn log_ok_msg(self, msg: impl AsRef<str>) -> Self;
+    /// Calls op to create message for `log::info!()` only on Ok results. Returns Result
+    fn log_ok_op(self, op: impl FnOnce(&T) -> String) -> Self;
 }
 
-impl<T, E> LogResult<E> for Result<T, E>
+impl<T, E> LogResult<T, E> for Result<T, E>
 where
     E: std::fmt::Display,
 {
+    fn log_ok_msg(self, msg: impl AsRef<str>) -> Self {
+        let msg = msg.as_ref();
+        match &self {
+            Ok(_) => log::info!("{msg}"),
+            _ => {}
+        }
+        self
+    }
+
+    fn log_ok_op(self, op: impl FnOnce(&T) -> String) -> Self {
+        match &self {
+            Ok(val) => {
+                let msg = op(val);
+                log::error!("{msg}");
+            }
+            _ => {}
+        }
+        self
+    }
+
     fn log_err_msg(self, msg: impl AsRef<str>) -> Self {
         match &self {
             Ok(_) => {}

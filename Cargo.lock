@@ -2451,6 +2451,7 @@ dependencies = [
  "config",
  "dotenv",
  "env_logger",
+ "futures",
  "log",
  "openssl",
  "poise",

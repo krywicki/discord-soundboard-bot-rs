@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 use std::path;
 
 use chrono;
+use futures::task;
 use r2d2_sqlite::rusqlite::OptionalExtension;
 use r2d2_sqlite::{
     rusqlite::{self},
@@ -63,19 +64,28 @@ pub struct AudioTableRowInsert {
 
 pub type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
 
-pub trait FtsCleanText {
+pub trait FtsText {
     fn fts_clean(&self) -> String;
+    fn fts_prepare_search(&self) -> String;
 }
 
-impl FtsCleanText for String {
+impl FtsText for String {
     fn fts_clean(&self) -> String {
         fts_clean_text(&self)
     }
+
+    fn fts_prepare_search(&self) -> String {
+        fts_prepare_search(fts_clean_text(&self))
+    }
 }
 
-impl<'a> FtsCleanText for &'a str {
+impl<'a> FtsText for &'a str {
     fn fts_clean(&self) -> String {
         fts_clean_text(&self)
+    }
+
+    fn fts_prepare_search(&self) -> String {
+        fts_prepare_search(fts_clean_text(&self))
     }
 }
 
@@ -93,7 +103,18 @@ pub fn fts_clean_text(text: impl AsRef<str>) -> String {
     let re = Regex::new(r"\s{2,}").unwrap();
     let text = re.replace_all(text.borrow(), " ");
 
+    let text = text.to_lowercase();
+
     text.trim().into()
+}
+
+pub fn fts_prepare_search(text: impl AsRef<str>) -> String {
+    let s = text.as_ref();
+
+    s.split_whitespace()
+        .map(|word| format!("{word}*"))
+        .reduce(|cur, nxt| format!("{cur} {nxt}"))
+        .unwrap_or("".into())
 }
 
 #[derive(Debug)]
@@ -114,21 +135,9 @@ impl UniqueAudioTableCol {
 }
 
 pub trait Table {
-    const NAME: &'static str;
-
     fn connection(&self) -> &Connection;
-
     fn create_table(&self);
-
-    fn drop_table(&self) {
-        match self
-            .connection()
-            .execute(format!("DROP TABLE {}", Self::NAME).as_str(), ())
-        {
-            Ok(_) => log::info!("Dropped table: {}", Self::NAME),
-            Err(err) => log::error!("Error dropping table: {} - {}", Self::NAME, err),
-        }
-    }
+    fn drop_table(&self);
 }
 
 pub struct AudioTable {
@@ -137,13 +146,26 @@ pub struct AudioTable {
 
 impl AudioTable {
     pub const DATETIME_FMT: &str = "%Y-%m-%d %H:%M:%SZ";
+    pub const TABLE_NAME: &'static str = "audio";
+    pub const FTS5_TABLE_NAME: &str = "fts5_audio";
 
     pub fn new(connection: Connection) -> Self {
         Self { conn: connection }
     }
 
+    pub fn fuzzy_search(&self, val: impl AsRef<str>, limit: usize) -> Option<Vec<AudioTableRow>> {
+        let table_name = Self::TABLE_NAME;
+        let sql = format!(
+            "
+
+        "
+        );
+
+        None
+    }
+
     pub fn find_audio_row(&self, col: UniqueAudioTableCol) -> Option<AudioTableRow> {
-        let table_name = Self::NAME;
+        let table_name = Self::TABLE_NAME;
 
         let sql_condition = col.sql_condition();
         let sql = format!("SELECT * FROM {table_name} WHERE {sql_condition}");
@@ -160,7 +182,7 @@ impl AudioTable {
             audio_row.name,
             audio_row.audio_file.to_string_lossy()
         );
-        let table_name = Self::NAME;
+        let table_name = Self::TABLE_NAME;
         let sql = format!(
             "
             INSERT INTO {table_name}
@@ -201,7 +223,7 @@ impl AudioTable {
                 "
                 SELECT id FROM {table_name} WHERE audio_file = '{audio_file}'
                 ",
-                table_name = Self::NAME,
+                table_name = Self::TABLE_NAME,
                 audio_file = audio_file
             )
             .as_str(),
@@ -223,7 +245,7 @@ impl AudioTable {
             Err(err) => {
                 log::error!(
                     "Failed query row on table: {table_name} in has_audio_file",
-                    table_name = Self::NAME
+                    table_name = Self::TABLE_NAME
                 );
                 false
             }
@@ -235,7 +257,7 @@ impl AudioTable {
         match self.conn.execute(
             format!(
                 "DELETE FROM {table_name} WHERE audio_file = '{audio_file}'",
-                table_name = Self::NAME,
+                table_name = Self::TABLE_NAME,
                 audio_file = audio_file
             )
             .as_str(),
@@ -250,15 +272,32 @@ impl AudioTable {
 }
 
 impl Table for AudioTable {
-    const NAME: &'static str = "audio";
-
     fn connection(&self) -> &Connection {
         &self.conn
     }
 
+    fn drop_table(&self) {
+        let table_name = Self::TABLE_NAME;
+        let fts5_table_name = Self::FTS5_TABLE_NAME;
+        let sql = format!(
+            "
+            BEGIN TRANSACTION
+                DROP TABLE {fts5_table_name};
+                DROP TABLE {table_name};
+            COMMIT;
+        "
+        );
+        self.connection()
+            .execute_batch(sql.as_str())
+            .log_err_msg(format!(
+                "Failed dropping tables: {table_name}, {fts5_table_name}"
+            ))
+            .log_ok_msg(format!("Dropped tables: {table_name}, {fts5_table_name}"));
+    }
+
     fn create_table(&self) {
-        let table_name = Self::NAME;
-        let fts5_table_name = format!("fts5_{}", Self::NAME);
+        let table_name = Self::TABLE_NAME;
+        let fts5_table_name = Self::FTS5_TABLE_NAME;
 
         log::info!("Creating tables {table_name}, {fts5_table_name}...");
 
@@ -277,25 +316,25 @@ impl Table for AudioTable {
                 );
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts5_table_name} USING FTS5(
-                    name, audio_file, content={table_name}, content_rowid=id
+                    name, tags, content={table_name}, content_rowid=id
                 );
 
                 CREATE TRIGGER IF NOT EXISTS {table_name}_insert AFTER INSERT ON {table_name} BEGIN
-                    INSERT INTO {fts5_table_name}(rowid, name, audio_file)
-                        VALUES (new.id, new.name, new.audio_file);
+                    INSERT INTO {fts5_table_name}(rowid, name, tags)
+                        VALUES (new.id, new.name, new.tags);
                 END;
 
                 CREATE TRIGGER IF NOT EXISTS {table_name}_delete AFTER DELETE ON {table_name} BEGIN
-                    INSERT INTO {fts5_table_name}({fts5_table_name}, rowid, name, audio_file)
-                        VALUES('delete', old.id, old.name, old.audio_file);
+                    INSERT INTO {fts5_table_name}({fts5_table_name}, rowid, name, tags)
+                        VALUES('delete', old.id, old.name, old.tags);
                 END;
 
                 CREATE TRIGGER IF NOT EXISTS {table_name}_update AFTER UPDATE ON {table_name} BEGIN
-                    INSERT INTO {fts5_table_name}({fts5_table_name}, rowid, name, audio_file)
-                        VALUES('delete', old.id, old.name, old.audio_file);
+                    INSERT INTO {fts5_table_name}({fts5_table_name}, rowid, name, tags)
+                        VALUES('delete', old.id, old.name, old.tags);
 
-                    INSERT INTO {fts5_table_name}(rowid, name, audio_file)
-                        VALUES (new.id, new.name, new.audio_file);
+                    INSERT INTO {fts5_table_name}(rowid, name, tags)
+                        VALUES (new.id, new.name, new.tags);
                 END;
             COMMIT;"
         );
@@ -341,7 +380,7 @@ impl AudioTablePaginator {
 
     pub fn next_page(&mut self) -> Result<Vec<AudioTableRow>, String> {
         let conn = &self.conn;
-        let table_name = AudioTable::NAME;
+        let table_name = AudioTable::TABLE_NAME;
         let order_by = self.order_by.col_name();
         let page_limit = self.page_limit;
         let offset = self.offset;
@@ -443,20 +482,20 @@ mod tests {
 
     #[test]
     fn fts_clean_text_test() {
-        assert_eq!("I love star wars", fts_clean_text("I love star-wars!  "));
+        assert_eq!("i love star wars", fts_clean_text("I love star-wars!  "));
 
         assert_eq!(
-            "I think its borked",
+            "i think its borked",
             fts_clean_text("I think it's borked!?!?!?!?")
         );
 
         assert_eq!(
-            "I like code",
+            "i like code",
             fts_clean_text(r"I like !@#$%^&*(_){}[]/\., code")
         );
 
         assert_eq!(
-            "This is a single line",
+            "this is a single line",
             fts_clean_text("This\nis\na\nsingle\nline\n")
         );
     }
