@@ -5,7 +5,7 @@ use std::{env, fs};
 
 use commands::{PoiseContext, PoiseResult};
 use common::LogResult;
-use db::{AudioTable, Table};
+use db::{AudioTable, SettingsTable, Table};
 use env_logger;
 use log;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -175,6 +175,7 @@ async fn handle_ready(
     );
 
     AudioTable::new(data.db_connection()).create_table();
+    SettingsTable::new(data.db_connection()).create_table();
 
     Ok(())
 }

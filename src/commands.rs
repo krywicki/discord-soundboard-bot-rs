@@ -1,3 +1,5 @@
+use std::borrow::BorrowMut;
+
 use poise::{command, Modal};
 use serenity::{
     all::{
@@ -61,10 +63,26 @@ pub async fn join(ctx: PoiseContext<'_>) -> PoiseResult {
         }
     }
 
-    if let Some(ref join_audio) = ctx.data().config.join_audio {
-        log::debug!("bot join audio enabled - song: {}", join_audio);
-        audio::play_audio_track(manager, guild_id, connect_to, &join_audio).await?;
+    if let Ok(settings) = ctx.data().settings_table().get_settings().log_err() {
+        if let Some(ref join_audio) = settings.join_audio {
+            log::info!("Detected join audio: {join_audio}. Attempting to play.");
+            match ctx
+                .data()
+                .audio_table()
+                .find_audio_row(db::UniqueAudioTableCol::Name(join_audio.clone()))
+            {
+                Some(row) => {
+                    log::debug!("bot join audio playing: {}", row.name);
+                    manager
+                        .play_audio(guild_id, connect_to, &row.audio_file)
+                        .await
+                        .log_err();
+                }
+                None => log::error!("Couldn't locate join audio"),
+            }
+        }
     }
+
     Ok(())
 }
 
@@ -81,12 +99,24 @@ pub async fn leave(ctx: PoiseContext<'_>) -> PoiseResult {
     match handler {
         Some(handler) => {
             // if leave audio set, play exit audio track
-            if let Some(ref leave_audio) = ctx.data().config.leave_audio {
-                log::debug!("bot leave audio enabled - song: {}", leave_audio);
-                play_audio_track(manager.clone(), guild_id, channel_id, &leave_audio)
-                    .await?
-                    .wait_for_end()
-                    .await;
+            if let Ok(settings) = ctx.data().settings_table().get_settings().log_err() {
+                if let Some(ref leave_audio) = settings.leave_audio {
+                    log::info!("Detected leave audio: {leave_audio}. Attempting to play.");
+                    match ctx
+                        .data()
+                        .audio_table()
+                        .find_audio_row(db::UniqueAudioTableCol::Name(leave_audio.clone()))
+                    {
+                        Some(row) => {
+                            log::debug!("bot leave audio playing: {}", row.name);
+                            manager
+                                .play_audio_to_end(guild_id, channel_id, &row.audio_file)
+                                .await
+                                .log_err();
+                        }
+                        None => log::error!("Couldn't locate leave audio"),
+                    }
+                }
             }
 
             match manager.remove(guild_id).await {
@@ -145,7 +175,14 @@ pub async fn play(
     slash_command,
     prefix_command,
     guild_only,
-    subcommands("add_sound", "remove_sound", "display_sounds", "edit_sound")
+    subcommands(
+        "add_sound",
+        "remove_sound",
+        "display_sounds",
+        "edit_sound",
+        "set_join_audio",
+        "set_leave_audio"
+    )
 )]
 pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
     log::warn!("/sounds command shouldn't be invoked direclty. It should just house sub commands");
@@ -384,6 +421,63 @@ pub async fn edit_sound(
             table.update_audio_row(&row).log_err()?;
         }
         None => log::info!("No audo track to update"),
+    }
+
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "join-audio")]
+pub async fn set_join_audio(
+    ctx: PoiseContext<'_>,
+    #[description = "Audio track name"]
+    #[rename = "track"]
+    #[autocomplete = "helpers::autocomplete_opt_audio_track_name"]
+    audio_track_name: String,
+) -> PoiseResult {
+    log::info!("Setting join audio: {audio_track_name:?}");
+
+    let table = ctx.data().settings_table();
+    let mut settings = table.get_settings().log_err()?;
+
+    match audio_track_name.as_str() {
+        "NONE" => {
+            settings.join_audio = None;
+            table.update_settings(&settings).log_err()?;
+            poise_check_msg(ctx.reply(format!("Bot join audio disabled")).await);
+        }
+        val => {
+            settings.join_audio = Some(val.into());
+            table.update_settings(&settings).log_err()?;
+            poise_check_msg(ctx.reply(format!("Bot join audio set to {val}")).await);
+        }
+    }
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "leave-audio")]
+pub async fn set_leave_audio(
+    ctx: PoiseContext<'_>,
+    #[description = "Audio track name"]
+    #[rename = "track"]
+    #[autocomplete = "helpers::autocomplete_opt_audio_track_name"]
+    audio_track_name: String,
+) -> PoiseResult {
+    log::info!("Setting leave audio: {audio_track_name:?}");
+
+    let table = ctx.data().settings_table();
+    let mut settings = table.get_settings().log_err()?;
+
+    match audio_track_name.as_str() {
+        "NONE" => {
+            settings.leave_audio = None;
+            table.update_settings(&settings).log_err()?;
+            poise_check_msg(ctx.reply(format!("Bot leave audio disabled")).await);
+        }
+        val => {
+            settings.leave_audio = Some(val.into());
+            table.update_settings(&settings).log_err()?;
+            poise_check_msg(ctx.reply(format!("Bot leave audio set to {val}")).await);
+        }
     }
 
     Ok(())

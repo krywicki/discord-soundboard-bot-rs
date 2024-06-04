@@ -30,31 +30,6 @@ pub async fn play_audio_track(
         track: "?".to_string(),
     }
     .into())
-    // let audio_track = audio_track.as_ref();
-
-    // log::debug!("Starting to play_audio_track - {}", &audio_track);
-
-    // match manager.get(guild_id) {
-    //     Some(handler_lock) => {
-    //         let mut handler = handler_lock.lock().await;
-
-    //         match find_audio_track(&audio_track) {
-    //             Some(audio_track_input) => {
-    //                 let track_handle = handler.play_input(audio_track_input.into());
-    //                 log::info!("Playing track {}", audio_track);
-
-    //                 return Ok(track_handle);
-    //             }
-    //             None => {
-    //                 return Err(AudioError::AudioTrackNotFound {
-    //                     track: audio_track.to_string(),
-    //                 }
-    //                 .into())
-    //             }
-    //         }
-    //     }
-    //     None => Err(AudioError::NotInVoiceChannel { guild_id: guild_id }.into()),
-    // }
 }
 
 pub async fn wait_for_audio_track_end(track_handle: &TrackHandle) {
@@ -64,7 +39,10 @@ pub async fn wait_for_audio_track_end(track_handle: &TrackHandle) {
                 PlayMode::Play => tokio::time::sleep(tokio::time::Duration::from_millis(250)).await,
                 _ => {}
             },
-            Err(_) => break,
+            Err(err) => {
+                log::error!("Error waiting for audio track end - {err}");
+                break;
+            }
         }
     }
 }
@@ -77,7 +55,7 @@ pub trait TrackHandleHelper {
 #[async_trait]
 impl TrackHandleHelper for TrackHandle {
     async fn wait_for_end(&self) {
-        wait_for_audio_track_end(&self);
+        wait_for_audio_track_end(&self).await;
     }
 }
 

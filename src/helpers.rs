@@ -18,7 +18,7 @@ use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use crate::audio::AudioFile;
+use crate::audio::{AudioFile, TrackHandleHelper};
 use crate::commands::{GenericError, PoiseContext, PoiseError, PoiseResult};
 use crate::common::LogResult;
 use crate::config::Config;
@@ -135,7 +135,16 @@ pub fn get_author_voice_channel(ctx: &PoiseContext) -> Result<(GuildId, ChannelI
 
 #[async_trait]
 pub trait SongbirdHelper {
+    /// Begins play audio track and returns handle to track
     async fn play_audio(
+        &self,
+        guild_id: GuildId,
+        channel_id: ChannelId,
+        audio_track: &audio::AudioFile,
+    ) -> Result<TrackHandle, AudioError>;
+
+    /// Plays audio track all the way to the end, then returns audio track
+    async fn play_audio_to_end(
         &self,
         guild_id: GuildId,
         channel_id: ChannelId,
@@ -161,6 +170,30 @@ impl SongbirdHelper for Songbird {
 
                 let track_handle = handler.play_input(audio_input.into());
                 log::info!("Playing track {audio_track:?}");
+                Ok(track_handle)
+            }
+            None => Err(AudioError::NotInVoiceChannel),
+        }
+    }
+
+    async fn play_audio_to_end(
+        &self,
+        guild_id: GuildId,
+        channel_id: ChannelId,
+        audio_track: &audio::AudioFile,
+    ) -> Result<TrackHandle, AudioError> {
+        log::debug!("Starting to play_audio_track - {audio_track:?}");
+
+        let audio_input = songbird::input::File::new(audio_track.as_path_buf());
+
+        match self.get(guild_id) {
+            Some(handler_lock) => {
+                let mut handler = handler_lock.lock().await;
+
+                let track_handle = handler.play_input(audio_input.into());
+                log::info!("Playing track {audio_track:?}");
+
+                track_handle.wait_for_end().await;
                 Ok(track_handle)
             }
             None => Err(AudioError::NotInVoiceChannel),
@@ -222,10 +255,11 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
     CreateActionRow::Buttons(buttons)
 }
 
-pub async fn autocomplete_audio_track_name<'a>(
+async fn autocomplete_audio_track_names<'a>(
     ctx: PoiseContext<'_>,
     partial: &'a str,
-) -> impl futures::stream::Stream<Item = String> + 'a {
+    limit: usize,
+) -> Vec<String> {
     let connection = ctx.data().db_connection();
     let limit = 5;
 
@@ -242,11 +276,11 @@ pub async fn autocomplete_audio_track_name<'a>(
         match rows {
             Ok(rows) => {
                 let rows: Vec<String> = rows.filter_map(|row| row.ok()).collect();
-                return futures::stream::iter(rows);
+                return rows;
             }
             Err(err) => {
                 log::error!("Autocomplete low-char sql query error - {err}");
-                return futures::stream::iter(vec![]);
+                return vec![];
             }
         }
     }
@@ -261,15 +295,31 @@ pub async fn autocomplete_audio_track_name<'a>(
     let rows = stmt.query_map((), |row| row.get("name"));
 
     match rows {
-        Ok(rows) => {
-            let rows: Vec<String> = rows.filter_map(|row| row.ok()).collect();
-            futures::stream::iter(rows)
-        }
+        Ok(rows) => rows.filter_map(|row| row.ok()).collect(),
         Err(err) => {
             log::error!("Autocomplete sql query error - {err}");
-            futures::stream::iter(vec![])
+            vec![]
         }
     }
+}
+
+pub async fn autocomplete_audio_track_name<'a>(
+    ctx: PoiseContext<'_>,
+    partial: &'a str,
+) -> impl futures::stream::Stream<Item = String> + 'a {
+    let audio_tracks = autocomplete_audio_track_names(ctx, partial, 5).await;
+    futures::stream::iter(audio_tracks)
+}
+
+pub async fn autocomplete_opt_audio_track_name<'a>(
+    ctx: PoiseContext<'_>,
+    partial: &'a str,
+) -> impl futures::stream::Stream<Item = String> + 'a {
+    let mut audio_tracks = autocomplete_audio_track_names(ctx, partial, 5).await;
+    let mut _audio_tracks = vec!["NONE".to_string()];
+
+    _audio_tracks.append(&mut audio_tracks);
+    futures::stream::iter(_audio_tracks)
 }
 
 pub async fn download_audio_url(

@@ -2,7 +2,7 @@ use std::{fs, path};
 
 use crate::audio::AudioDir;
 use crate::config::Config;
-use crate::db::{AudioTable, Connection};
+use crate::db::{AudioTable, Connection, SettingsTable};
 
 pub struct UserData {
     pub config: Config,
@@ -22,6 +22,10 @@ impl UserData {
 
     pub fn audio_table(&self) -> AudioTable {
         AudioTable::new(self.db_connection())
+    }
+
+    pub fn settings_table(&self) -> SettingsTable {
+        SettingsTable::new(self.db_connection())
     }
 }
 
@@ -105,9 +109,19 @@ where
 mod tests {
     use super::*;
 
+    fn make_temp_dir() -> path::PathBuf {
+        let dir = std::env::temp_dir();
+        let uuid = uuid::Uuid::new_v4();
+        let mut encode_buf = uuid::Uuid::encode_buffer();
+        let uuid = uuid.hyphenated().encode_lower(&mut encode_buf);
+        let temp_dir = dir.join(uuid);
+        fs::create_dir(temp_dir.as_path()).expect("Failed creating temp directory");
+        temp_dir
+    }
+
     #[test]
     fn read_audio_dir_test() {
-        let dir = std::env::temp_dir();
+        let dir = make_temp_dir();
         std::fs::File::create(dir.join("a.mp3")).unwrap();
         std::fs::File::create(dir.join("b.mp3")).unwrap();
         std::fs::File::create(dir.join("c.txt")).unwrap();

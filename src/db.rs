@@ -9,6 +9,7 @@ use r2d2_sqlite::{
     SqliteConnectionManager,
 };
 use regex::Regex;
+use rusqlite::types::FromSql;
 use rusqlite::{MappedRows, Row, ToSql};
 
 use crate::audio;
@@ -331,7 +332,7 @@ impl Table for AudioTable {
             BEGIN;
                 CREATE TABLE IF NOT EXISTS {table_name} (
                     id INTEGER PRIMARY KEY,
-                    name VARCHAR(50) NOT NULL UNIQUE,
+                    name VARCHAR(80) NOT NULL UNIQUE,
                     tags VARCHAR(2048) NOT NULL,
                     audio_file VARCHAR(500) NOT NULL UNIQUE,
                     created_at VARCHAR(25) NOT NULL,
@@ -370,6 +371,142 @@ impl Table for AudioTable {
             .unwrap();
 
         log::info!("Created tables {table_name}, {fts5_table_name}!");
+    }
+}
+
+pub struct SettingsTableRow {
+    pub id: i64,
+    pub join_audio: Option<String>,
+    pub leave_audio: Option<String>,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for SettingsTableRow {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row<'_>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: row.get("id")?,
+            join_audio: row.get("join_audio")?,
+            leave_audio: row.get("leave_audio")?,
+        })
+    }
+}
+pub struct SettingsTable {
+    conn: Connection,
+}
+
+impl SettingsTable {
+    const TABLE_NAME: &str = "settings";
+
+    pub fn new(connection: Connection) -> Self {
+        Self { conn: connection }
+    }
+
+    fn first_row(&self) -> Result<Option<SettingsTableRow>, PoiseError> {
+        let table_name = Self::TABLE_NAME;
+        let sql = format!("SELECT * FROM {table_name} LIMIT 1");
+        Ok(self
+            .conn
+            .query_row(sql.as_str(), (), |row| SettingsTableRow::try_from(row))
+            .optional()
+            .log_err_msg(format!("Failed to get first row of {table_name}"))?)
+    }
+
+    fn init_settings(&self) -> Result<SettingsTableRow, PoiseError> {
+        let table_name = Self::TABLE_NAME;
+
+        let sql = format!(
+            "
+            INSERT INTO {table_name}
+                (join_audio, leave_audio)
+            VALUES
+                (?1, ?2)
+            "
+        );
+
+        let none: Option<String> = None;
+        self.conn
+            .execute(sql.as_str(), (&none, &none))
+            .log_err_msg(format!("Failed init settings row in table: {table_name}"))?;
+
+        Ok(self
+            .first_row()
+            .log_err()?
+            .ok_or("Failed to insert initial settings row")?)
+    }
+
+    pub fn get_settings(&self) -> Result<SettingsTableRow, PoiseError> {
+        match self.first_row()? {
+            Some(settings) => Ok(settings),
+            None => self.init_settings(),
+        }
+    }
+
+    pub fn update_settings(&self, settings: &SettingsTableRow) -> Result<(), PoiseError> {
+        log::info!("Saving settings");
+
+        let table_name = Self::TABLE_NAME;
+        let row_id = settings.id;
+        let join_audio = settings
+            .join_audio
+            .as_ref()
+            .map_or("NULL".into(), |val| format!("'{val}'"));
+        let leave_audio = settings
+            .leave_audio
+            .as_ref()
+            .map_or("NULL".into(), |val| format!("'{val}'"));
+
+        let sql = format!(
+            "
+            UPDATE {table_name}
+            SET
+                join_audio = {join_audio},
+                leave_audio = {leave_audio}
+            WHERE
+                id = {row_id};
+            "
+        );
+
+        self.conn.execute(sql.as_str(), ()).log_err()?;
+
+        Ok(())
+    }
+}
+
+impl Table for SettingsTable {
+    fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
+    fn create_table(&self) {
+        let table_name = Self::TABLE_NAME;
+        log::info!("Creating table: {table_name}");
+        let sql = format!(
+            "
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                id INTEGER PRIMARY KEY,
+                join_audio VARCHAR(80),
+                leave_audio VARCHAR(80)
+            );
+        "
+        );
+
+        self.conn
+            .execute_batch(sql.as_str())
+            .log_err_msg("Failed create table")
+            .log_ok_msg(format!("Created table {table_name}"))
+            .unwrap();
+    }
+
+    fn drop_table(&self) {
+        let table_name = Self::TABLE_NAME;
+        log::info!("Dropping table: {table_name}");
+
+        let sql = format!("DROP TABLE {table_name}");
+        self.conn
+            .execute(sql.as_str(), ())
+            .log_err_msg("Failed to drop table")
+            .log_ok_msg(format!("Dropped table {table_name}"));
     }
 }
 
@@ -558,14 +695,14 @@ mod tests {
     }
 
     #[test]
-    fn create_table_test() {
+    fn audio_table_create_test() {
         let table = get_audio_table();
         table.create_table(); // create table(s) & trigger(s)
         table.create_table(); // ignore table(s) & triggers(s) already created
     }
 
     #[test]
-    fn drop_table_test() {
+    fn audio_table_drop_test() {
         let table = get_audio_table();
 
         table.drop_table(); // if no table(s) exist
@@ -574,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn table_insert_audio_row_test() {
+    fn audio_table_insert_row_test() {
         let table = get_audio_table();
 
         table.create_table();
@@ -584,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn table_get_audio_row_test() {
+    fn audio_table_get_row_test() {
         let table = get_audio_table();
         table.create_table();
 
@@ -598,7 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn table_pagination_test() {
+    fn audio_table_pagination_test() {
         let db_manager = SqliteConnectionManager::memory();
         let db_pool = r2d2::Pool::new(db_manager).unwrap();
         let table = AudioTable::new(db_pool.get().unwrap());
@@ -622,5 +759,54 @@ mod tests {
 
         let page = paginator.next();
         assert!(page.is_none());
+    }
+
+    fn get_settings_table() -> SettingsTable {
+        let connection = get_db_connection();
+        SettingsTable::new(connection)
+    }
+
+    #[test]
+    fn settings_table_create_test() {
+        let table = get_settings_table();
+        table.create_table();
+        table.create_table();
+    }
+
+    #[test]
+    fn settings_table_drop_test() {
+        let table = get_settings_table();
+        table.drop_table();
+        table.create_table();
+        table.drop_table();
+    }
+
+    #[test]
+    fn get_settings_test() {
+        let table = get_settings_table();
+        table.create_table();
+        let settings = table.get_settings().unwrap();
+
+        assert!(settings.join_audio.is_none());
+        assert!(settings.leave_audio.is_none());
+    }
+
+    #[test]
+    fn update_settings_test() {
+        let table = get_settings_table();
+        table.create_table();
+        let mut settings = table.get_settings().unwrap();
+
+        let join_audio = Some("join.mp3".into());
+        let leave_audio = Some("leave.mp3".into());
+
+        settings.join_audio = join_audio.clone();
+        settings.leave_audio = leave_audio.clone();
+
+        table.update_settings(&settings).unwrap();
+
+        let settings = table.get_settings().unwrap();
+        assert_eq!(settings.join_audio, join_audio);
+        assert_eq!(settings.leave_audio, leave_audio);
     }
 }
