@@ -141,24 +141,14 @@ pub async fn play(
 //     Ok(())
 // }
 
-#[poise::command(slash_command, prefix_command, guild_only, subcommands("add_sound"))]
+#[poise::command(
+    slash_command,
+    prefix_command,
+    guild_only,
+    subcommands("add_sound", "remove_sound", "display_sounds", "edit_sound")
+)]
 pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
-    log::info!("List sounds buttons as ActionRows grid...");
-    let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
-        .page_limit(vars::ACTION_ROWS_LIMIT)
-        .build();
-
-    for audio_rows in paginator {
-        let audio_rows = audio_rows.log_err()?;
-        let mut action_grid: Vec<Vec<CreateActionRow>> = vec![];
-
-        // ActionRows: Have a 5x5 grid limit
-        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-        let builder = CreateMessage::new().components(btn_grid);
-        check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
-    }
-
+    log::warn!("/sounds command shouldn't be invoked direclty. It should just house sub commands");
     Ok(())
 }
 
@@ -238,13 +228,12 @@ pub async fn register(ctx: PoiseContext<'_>) -> PoiseResult {
 struct AddSoundModal {
     #[name = "Name"] // Field name by default
     #[placeholder = "Use The Force Luke"] // No placeholder by default
-    #[min_length = 5] // No length restriction by default (so, 1-4000 chars)
+    #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
     #[max_length = 500]
     name: String,
 
     #[name = "Tags"] // Field name by default
     #[placeholder = "star Wars jedi luke skywalker force episode iv"] // No placeholder by default
-    #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
     #[max_length = 1024]
     tags: Option<String>,
 
@@ -291,6 +280,110 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
                 })
                 .log_err()?;
         }
+    }
+
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "remove")]
+pub async fn remove_sound(
+    ctx: PoiseContext<'_>,
+    #[rename = "track"]
+    #[description = "Track to play"]
+    #[autocomplete = "helpers::autocomplete_audio_track_name"]
+    audio_track_name: String,
+) -> PoiseResult {
+    log::info!("Removing audio track - {audio_track_name}");
+    let table = ctx.data().audio_table();
+
+    table.delete_audio_row(db::UniqueAudioTableCol::Name(audio_track_name.clone()))?;
+    poise_check_msg(
+        ctx.reply(format!("Deleted audio track '{audio_track_name}'"))
+            .await,
+    );
+
+    log::info!("Audio track removed {audio_track_name}");
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "display")]
+pub async fn display_sounds(ctx: PoiseContext<'_>) -> PoiseResult {
+    log::info!("List sounds buttons as ActionRows grid...");
+    let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
+        .page_limit(vars::ACTION_ROWS_LIMIT)
+        .build();
+
+    for audio_rows in paginator {
+        let audio_rows = audio_rows.log_err()?;
+        let mut action_grid: Vec<Vec<CreateActionRow>> = vec![];
+
+        // ActionRows: Have a 5x5 grid limit
+        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
+        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
+        let builder = CreateMessage::new().components(btn_grid);
+        check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, poise::Modal)]
+#[name = "Edit Sound"]
+struct EditSoundModal {
+    #[name = "Name"]
+    #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
+    #[max_length = 500]
+    name: String,
+    #[name = "Name"]
+    #[max_length = 1024]
+    tags: Option<String>,
+}
+
+#[poise::command(slash_command, guild_only, rename = "edit")]
+pub async fn edit_sound(
+    ctx: PoiseAppContext<'_>,
+    #[description = "Audio track to edit"]
+    #[rename = "track"]
+    #[autocomplete = "helpers::autocomplete_audio_track_name"]
+    audio_track_name: String,
+) -> PoiseResult {
+    log::info!("Editing audio track - {audio_track_name}");
+
+    let table = ctx.data().audio_table();
+
+    let mut row = table
+        .find_audio_row(db::UniqueAudioTableCol::Name(audio_track_name.clone()))
+        .ok_or(format!("Unable to locate audio track '{audio_track_name}'"))
+        .log_err()?;
+
+    let name_tags = row.name.fts_clean();
+    let tags = {
+        let tags = row.tags.replace(&name_tags, "");
+        let tags = tags.trim();
+        match tags {
+            "" => None,
+            val => Some(tags.to_string()),
+        }
+    };
+
+    let data = EditSoundModal::execute_with_defaults(
+        ctx,
+        EditSoundModal {
+            name: audio_track_name.clone(),
+            tags: tags,
+        },
+    )
+    .await?;
+
+    match data {
+        Some(data) => {
+            log::debug!("{data:?}");
+            row.name = data.name.clone();
+            row.tags = format!("{} {}", data.name, data.tags.unwrap_or("".into())).fts_clean();
+
+            table.update_audio_row(&row).log_err()?;
+        }
+        None => log::info!("No audo track to update"),
     }
 
     Ok(())

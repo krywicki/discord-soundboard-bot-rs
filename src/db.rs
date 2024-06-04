@@ -12,6 +12,7 @@ use regex::Regex;
 use rusqlite::{MappedRows, Row, ToSql};
 
 use crate::audio;
+use crate::commands::PoiseError;
 use crate::common::LogResult;
 
 pub struct AudioTableRow {
@@ -117,11 +118,17 @@ pub fn fts_prepare_search(text: impl AsRef<str>) -> String {
         .unwrap_or("".into())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UniqueAudioTableCol {
     Id(i64),
     Name(String),
     AudioFile(String),
+}
+
+impl AsRef<UniqueAudioTableCol> for UniqueAudioTableCol {
+    fn as_ref(&self) -> &UniqueAudioTableCol {
+        &self
+    }
 }
 
 impl UniqueAudioTableCol {
@@ -153,7 +160,8 @@ impl AudioTable {
         Self { conn: connection }
     }
 
-    pub fn find_audio_row(&self, col: UniqueAudioTableCol) -> Option<AudioTableRow> {
+    pub fn find_audio_row(&self, col: impl AsRef<UniqueAudioTableCol>) -> Option<AudioTableRow> {
+        let col = col.as_ref();
         let table_name = Self::TABLE_NAME;
 
         let sql_condition = col.sql_condition();
@@ -241,22 +249,50 @@ impl AudioTable {
         }
     }
 
-    pub fn delete_row_by_audio_file(&self, audio_file: impl AsRef<str>) {
-        let audio_file = audio_file.as_ref();
-        match self.conn.execute(
-            format!(
-                "DELETE FROM {table_name} WHERE audio_file = '{audio_file}'",
-                table_name = Self::TABLE_NAME,
-                audio_file = audio_file
-            )
-            .as_str(),
-            (),
-        ) {
-            Ok(_) => {}
-            Err(err) => {
-                log::error!("Failed to delete row by audio_file = '{}'", audio_file)
+    pub fn update_audio_row(&self, audio_row: &AudioTableRow) -> Result<(), String> {
+        log::info!("Updating audio row. Name: {}", audio_row.name);
+
+        let table_name = Self::TABLE_NAME;
+        let name = &audio_row.name;
+        let tags = &audio_row.tags;
+        let row_id = audio_row.id;
+
+        let sql = format!(
+            "
+            UPDATE {table_name}
+            SET
+                name = '{name}',
+                tags = '{tags}'
+            WHERE
+                id = {row_id};
+        "
+        );
+
+        self.conn
+            .execute(sql.as_str(), ())
+            .log_err_msg("Failed updating audio track")
+            .map_err(|err| err.to_string())?;
+
+        log::info!("Updated audio row. Name: {name}");
+        Ok(())
+    }
+
+    pub fn delete_audio_row(&self, col: impl AsRef<UniqueAudioTableCol>) -> Result<(), PoiseError> {
+        let column = col.as_ref();
+        match self.find_audio_row(&col) {
+            None => log::info!("Can't delete non-existent audio track. {column:?}"),
+            Some(row) => {
+                row.audio_file.delete();
+                let table_name = Self::TABLE_NAME;
+                let row_id = row.id;
+                let sql = format!("DELETE FROM {table_name} WHERE id = {row_id}");
+
+                self.conn
+                    .execute(sql.as_str(), ())
+                    .log_err_msg("Failed to delete audio row")?;
             }
-        };
+        }
+        Ok(())
     }
 }
 

@@ -334,7 +334,10 @@ pub async fn download_audio_url(
     }
 
     // move audio file to destination directory
+
     let final_audio_file_path = dest_dir.join(file_name.as_str());
-    std::fs::rename(&audio_file_path, &final_audio_file_path).log_err()?;
+    std::fs::copy(&audio_file_path, &final_audio_file_path)
+        .log_err_msg("Could not copy audio file to target dir")
+        .or(Err("Could not set audio file in target directory"))?;
     Ok(AudioFile::new(final_audio_file_path))
 }

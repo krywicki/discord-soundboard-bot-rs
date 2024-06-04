@@ -16,6 +16,7 @@ use songbird::Songbird;
 
 use crate::commands::PoiseContext;
 use crate::commands::PoiseError;
+use crate::common::LogResult;
 use crate::errors::AudioError;
 use crate::helpers;
 
@@ -129,6 +130,13 @@ pub struct AudioFile(path::PathBuf);
 impl AudioFile {
     pub fn new(p: path::PathBuf) -> Self {
         Self(p)
+    }
+
+    pub fn delete(&self) {
+        std::fs::remove_file(self.0.as_path()).log_err_msg(format!(
+            "Failed to delete audio file {}",
+            self.0.to_string_lossy()
+        ));
     }
 
     pub fn as_path_buf(&self) -> path::PathBuf {
