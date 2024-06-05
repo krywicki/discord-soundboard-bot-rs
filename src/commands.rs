@@ -294,17 +294,18 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
 
     match row {
         Some(_) => {
-            log::error!(
-                "Can't add sound. Sound already exists - name: {}",
-                data.name
-            );
-            poise_check_msg(ctx.reply("A sound by that name already exists").await);
+            return Err("Can't add sound. It already exists".into()).log_err();
         }
         None => {
-            let audio_file =
-                helpers::download_audio_url(&data.url, &ctx.data.config.audio_dir.as_path())
-                    .await?;
+            let temp_audio_file = audio::download_audio_url_temp(&data.url).await?;
 
+            // validate audio track (codec type, length, etc)
+            audio::AudioFileValidator::default()
+                .max_audio_file_duration(ctx.data().config.max_audio_file_duration)
+                .validate_audio_file(&temp_audio_file)?;
+
+            // move track to sounds dir
+            let audio_file = ctx.data().move_file_to_audio_dir(&temp_audio_file)?;
             table
                 .insert_audio_row(AudioTableRowInsert {
                     name: data.name.clone(),
@@ -318,6 +319,11 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
                 .log_err()?;
         }
     }
+
+    poise_check_msg(
+        ctx.reply(format!("Added sound `{}` to soundboard", data.name))
+            .await,
+    );
 
     Ok(())
 }

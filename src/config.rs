@@ -1,6 +1,6 @@
 use std::{any::type_name, env, path, str::FromStr};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -14,6 +14,11 @@ pub struct Config {
     pub leave_audio: Option<String>,
     #[serde(default = "default_sqlite_db_file")]
     pub sqlite_db_file: path::PathBuf,
+    #[serde(
+        default = "default_max_audio_file_duration",
+        deserialize_with = "de_max_audio_file_duration"
+    )]
+    pub max_audio_file_duration: std::time::Duration,
 }
 
 impl Config {
@@ -71,11 +76,12 @@ impl Default for Config {
         Self {
             application_id: 0,
             token: "".into(),
-            audio_dir: "".into(),
-            command_prefix: "".into(),
+            audio_dir: default_audio_dir(),
+            command_prefix: default_command_prefix(),
             join_audio: None,
             leave_audio: None,
-            sqlite_db_file: "".into(),
+            sqlite_db_file: default_sqlite_db_file(),
+            max_audio_file_duration: default_max_audio_file_duration(),
         }
     }
 }
@@ -90,4 +96,16 @@ fn default_command_prefix() -> String {
 
 fn default_sqlite_db_file() -> path::PathBuf {
     path::PathBuf::from_str("./bot.db3").unwrap()
+}
+
+pub fn default_max_audio_file_duration() -> std::time::Duration {
+    std::time::Duration::from_secs(7)
+}
+
+pub fn de_max_audio_file_duration<'de, D>(deserializer: D) -> Result<std::time::Duration, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    Ok(std::time::Duration::from_millis(value))
 }

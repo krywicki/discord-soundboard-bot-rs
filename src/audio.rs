@@ -1,10 +1,12 @@
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Write;
 use std::ops::Deref;
 use std::path;
 use std::sync::Arc;
 
 use chrono::{Duration, TimeDelta};
+use futures::StreamExt;
 use rusqlite::types::FromSql;
 use rusqlite::ToSql;
 use serenity::async_trait;
@@ -20,8 +22,8 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use crate::commands::PoiseContext;
 use crate::commands::PoiseError;
+use crate::commands::{PoiseContext, PoiseResult};
 use crate::common::LogResult;
 use crate::errors::AudioError;
 use crate::helpers;
@@ -190,7 +192,7 @@ impl RemoveAudioFile for Vec<AudioFile> {
 }
 
 pub struct AudioTrackInfo {
-    pub duration: TimeDelta,
+    pub duration: std::time::Duration,
 }
 pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrackInfo, PoiseError> {
     let path = audio_file.as_ref();
@@ -246,9 +248,124 @@ pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrac
         }
     }
 
-    let duration_ms = (duration * 1000.0) as i64;
+    let duration_ms = (duration * 1000.0) as u64;
     log::info!("Audio track duration = {duration:.2} seconds");
     Ok(AudioTrackInfo {
-        duration: Duration::milliseconds(duration_ms),
+        duration: std::time::Duration::from_millis(duration_ms),
     })
+}
+
+/// download audio url to temp dir (audio file is uuid4 name)
+pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathBuf, PoiseError> {
+    let url = url.as_ref();
+    log::info!("Downloading audio url - {url}");
+
+    let client = reqwest::Client::new();
+
+    // HEAD request to ensure Content-Type == 'audio/mpeg'
+    let resp = client
+        .head(url)
+        .send()
+        .await
+        .log_err_msg("Download audio url failed HTTP HEAD")?;
+
+    let response = reqwest::get(url).await?;
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .unwrap();
+
+    match content_type.to_str().unwrap_or("") {
+        "audio/mpeg" | "audio/mpeg3" | "x-mpeg-3" => {}
+        val => {
+            return Err(
+                format!("Invalid content type: {val} for url. Expected 'audio/mpeg'",).into(),
+            )
+            .log_err();
+        }
+    }
+
+    let uuid = helpers::uuid_v4_str();
+    let file_name = format!("{uuid}.mp3");
+    let audio_file_path = std::env::temp_dir().join(file_name.as_str());
+
+    // Download audio file
+    let mut file = std::fs::File::create(audio_file_path.as_path())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .log_err_msg("Failed HTTP GET on url")?;
+
+    let mut stream = response.bytes_stream();
+    while let Some(item) = stream.next().await {
+        let chunk = item
+            .or(Err(format!("Error while downloading file")))
+            .log_err()?;
+
+        file.write_all(&chunk)
+            .or(Err(format!("Error while writing to file")))
+            .log_err()?;
+    }
+
+    Ok(audio_file_path)
+
+    // let track_info = audio::probe_audio_track(&audio_file_path)?;
+    // if track_info.duration >= Duration::seconds(7) {
+    //     return Err(format!(
+    //         "Audio track is too long: {:.2} seconds. Max allowed duration is {} seconds",
+    //         (track_info.duration.num_milliseconds() as f64) / 1000.0,
+    //         7,
+    //     ))
+    //     .log_err()?;
+    // }
+
+    // // move audio file to destination directory
+
+    // let final_audio_file_path = dest_dir.join(file_name.as_str());
+    // std::fs::copy(&audio_file_path, &final_audio_file_path)
+    //     .log_err_msg("Could not copy audio file to target dir")
+    //     .or(Err("Could not set audio file in target directory"))?;
+    // Ok(AudioFile::new(final_audio_file_path))
+}
+
+pub struct AudioFileValidator {
+    max_audio_file_duration: std::time::Duration,
+}
+
+impl Default for AudioFileValidator {
+    fn default() -> Self {
+        Self {
+            max_audio_file_duration: crate::config::default_max_audio_file_duration(),
+        }
+    }
+}
+
+impl AudioFileValidator {
+    pub fn max_audio_file_duration(mut self, duration: std::time::Duration) -> Self {
+        self.max_audio_file_duration = duration;
+        self
+    }
+
+    pub fn validate_audio_file(&self, path: impl AsRef<path::Path>) -> Result<(), PoiseError> {
+        let audio_file = path.as_ref();
+        log::info!("Validating audio file: {}", audio_file.to_string_lossy());
+
+        if !audio_file.exists() {
+            return Err("Audio file doesn't exist".into()).log_err();
+        }
+
+        if !audio_file.is_file() {
+            return Err("Audio file path isn't a file".into()).log_err();
+        }
+
+        let track_info = probe_audio_track(&audio_file)?;
+        if track_info.duration > self.max_audio_file_duration {
+            let track_dur = track_info.duration.as_secs_f64();
+            let max_dur = self.max_audio_file_duration.as_secs_f64();
+            return Err(format!("Audio track is {track_dur:.2}s long. This exceeds the max duration of {max_dur:.2}s").into()).log_err();
+        }
+
+        Ok(())
+    }
 }

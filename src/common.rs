@@ -1,6 +1,7 @@
 use std::{fs, path};
 
-use crate::audio::AudioDir;
+use crate::audio::{AudioDir, AudioFile};
+use crate::commands::PoiseError;
 use crate::config::Config;
 use crate::db::{AudioTable, Connection, SettingsTable};
 
@@ -26,6 +27,55 @@ impl UserData {
 
     pub fn settings_table(&self) -> SettingsTable {
         SettingsTable::new(self.db_connection())
+    }
+
+    /// Attempts to move file to audio dir. Will attempt copy if move fails
+    /// Moves can fail if target file and destination audio directory are on separate partitions of file systems
+    pub fn move_file_to_audio_dir(
+        &self,
+        path: impl AsRef<path::Path>,
+    ) -> Result<AudioFile, PoiseError> {
+        let target_file = path.as_ref();
+        let audio_dir = &self.config.audio_dir;
+
+        log::info!(
+            "Move file: {} to audio dir: {}",
+            target_file.to_string_lossy(),
+            audio_dir.to_string_lossy()
+        );
+
+        if !target_file.exists() {
+            return Err("Target file doesn't exist".into()).log_err();
+        }
+
+        if !target_file.is_file() {
+            return Err("Target file is not a file.".into()).log_err();
+        }
+
+        let target_file_name = target_file
+            .file_name()
+            .ok_or("Failed to get target path file name")
+            .log_err()?;
+        let dest_file = audio_dir.join(target_file_name);
+
+        match std::fs::rename(target_file, &dest_file) {
+            Ok(_) => Ok(AudioFile::new(dest_file)),
+            Err(err) => {
+                log::error!(
+                    "Failed to move target file to audio dir - {err}. Attempting copy instead."
+                );
+                std::fs::copy(target_file, &dest_file)
+                    .log_err_msg("Failed to copy target file to audio dir")?;
+
+                log::info!(
+                    "Copied target file: {} to destination: {}",
+                    target_file.to_string_lossy(),
+                    dest_file.to_string_lossy()
+                );
+
+                Ok(AudioFile::new(dest_file))
+            }
+        }
     }
 }
 

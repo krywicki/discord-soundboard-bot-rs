@@ -324,10 +324,10 @@ pub async fn autocomplete_opt_audio_track_name<'a>(
     futures::stream::iter(_audio_tracks)
 }
 
-pub async fn download_audio_url(
+pub async fn download_audio_url_temp(
     url: impl AsRef<str>,
     dest_dir: &path::Path,
-) -> Result<AudioFile, PoiseError> {
+) -> Result<path::PathBuf, PoiseError> {
     let url = url.as_ref();
     log::info!("Downloading audio url - {url}");
 
@@ -355,7 +355,6 @@ pub async fn download_audio_url(
             .log_err();
         }
     }
-    if content_type != "audio/mpeg" {}
 
     // Create uuid audio file in /tmp directory
     let uuid = uuid::Uuid::new_v4();
@@ -365,42 +364,49 @@ pub async fn download_audio_url(
     let file_name = format!("{uuid}.mp3");
     let audio_file_path = std::env::temp_dir().join(file_name.as_str());
 
-    {
-        // Download audio file
-        let mut file = std::fs::File::create(audio_file_path.as_path())?;
-        let response = client
-            .get(url)
-            .send()
-            .await
-            .log_err_msg("Failed HTTP GET on url")?;
+    // Download audio file
+    let mut file = std::fs::File::create(audio_file_path.as_path())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .log_err_msg("Failed HTTP GET on url")?;
 
-        let mut stream = response.bytes_stream();
-        while let Some(item) = stream.next().await {
-            let chunk = item
-                .or(Err(format!("Error while downloading file")))
-                .log_err()?;
+    let mut stream = response.bytes_stream();
+    while let Some(item) = stream.next().await {
+        let chunk = item
+            .or(Err(format!("Error while downloading file")))
+            .log_err()?;
 
-            file.write_all(&chunk)
-                .or(Err(format!("Error while writing to file")))
-                .log_err()?;
-        }
+        file.write_all(&chunk)
+            .or(Err(format!("Error while writing to file")))
+            .log_err()?;
     }
 
-    let track_info = audio::probe_audio_track(&audio_file_path)?;
-    if track_info.duration >= Duration::seconds(7) {
-        return Err(format!(
-            "Audio track is too long: {:.2} seconds. Max allowed duration is {} seconds",
-            (track_info.duration.num_milliseconds() as f64) / 1000.0,
-            7,
-        ))
-        .log_err()?;
-    }
+    Ok(audio_file_path)
 
-    // move audio file to destination directory
+    // let track_info = audio::probe_audio_track(&audio_file_path)?;
+    // if track_info.duration >= Duration::seconds(7) {
+    //     return Err(format!(
+    //         "Audio track is too long: {:.2} seconds. Max allowed duration is {} seconds",
+    //         (track_info.duration.num_milliseconds() as f64) / 1000.0,
+    //         7,
+    //     ))
+    //     .log_err()?;
+    // }
 
-    let final_audio_file_path = dest_dir.join(file_name.as_str());
-    std::fs::copy(&audio_file_path, &final_audio_file_path)
-        .log_err_msg("Could not copy audio file to target dir")
-        .or(Err("Could not set audio file in target directory"))?;
-    Ok(AudioFile::new(final_audio_file_path))
+    // // move audio file to destination directory
+
+    // let final_audio_file_path = dest_dir.join(file_name.as_str());
+    // std::fs::copy(&audio_file_path, &final_audio_file_path)
+    //     .log_err_msg("Could not copy audio file to target dir")
+    //     .or(Err("Could not set audio file in target directory"))?;
+    // Ok(AudioFile::new(final_audio_file_path))
+}
+
+pub fn uuid_v4_str() -> String {
+    // Create uuid audio file in /tmp directory
+    let uuid = uuid::Uuid::new_v4();
+    let mut encode_buf = uuid::Uuid::encode_buffer();
+    uuid.hyphenated().encode_lower(&mut encode_buf).to_string()
 }
