@@ -1,6 +1,6 @@
 use std::borrow::BorrowMut;
 
-use poise::{command, Modal};
+use poise::{command, CreateReply, Modal};
 use serenity::{
     all::{
         CreateActionRow, CreateButton, CreateInteractionResponse,
@@ -162,15 +162,6 @@ pub async fn play(
     Ok(())
 }
 
-// #[poise::command(prefix_command, guild_only)]
-// async fn list(ctx: PoiseContext<'_>, msg: &Message) -> PoiseResult {
-//     let audio_tracks_md = audio::list_audio_track_names_markdown();
-
-//     helpers::check_msg(msg.reply(ctx, audio_tracks_md).await);
-
-//     Ok(())
-// }
-
 #[poise::command(
     slash_command,
     prefix_command,
@@ -189,16 +180,20 @@ pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
     Ok(())
 }
 
-// #[poise::command(prefix_command, guild_only)]
-// async fn help(ctx: PoiseContext<'_>, msg: &Message) -> PoiseResult {
-//     Ok(())
-// }
-
 #[poise::command(prefix_command, guild_only)]
 pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
     log::info!("Scanning audio files...");
 
-    let mut audio_files: Vec<AudioFile> = ctx.data().read_audio_dir().into_iter().collect();
+    let audio_validator = audio::AudioFileValidator::new()
+        .max_audio_duration(ctx.data().config.max_audio_file_duration);
+
+    let mut audio_files: Vec<AudioFile> = ctx
+        .data()
+        .read_audio_dir()
+        .into_iter()
+        .filter(|f| audio_validator.validate(f.as_path()).is_ok())
+        .collect();
+
     let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection()).build();
 
     // ignore audio files already in database
@@ -214,6 +209,7 @@ pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
         "Scan found {} audio files to add to databse",
         audio_files.len()
     );
+
     let mut inserted = 0;
     let table = AudioTable::new(ctx.data().db_connection());
     for audio_file in audio_files {
@@ -301,8 +297,8 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
 
             // validate audio track (codec type, length, etc)
             audio::AudioFileValidator::default()
-                .max_audio_file_duration(ctx.data().config.max_audio_file_duration)
-                .validate_audio_file(&temp_audio_file)?;
+                .max_audio_duration(ctx.data().config.max_audio_file_duration)
+                .validate(&temp_audio_file)?;
 
             // move track to sounds dir
             let audio_file = ctx.data().move_file_to_audio_dir(&temp_audio_file)?;
@@ -352,6 +348,9 @@ pub async fn remove_sound(
 #[poise::command(slash_command, guild_only, rename = "display")]
 pub async fn display_sounds(ctx: PoiseContext<'_>) -> PoiseResult {
     log::info!("List sounds buttons as ActionRows grid...");
+
+    poise_check_msg(ctx.reply("Displaying sounds...").await);
+
     let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
         .page_limit(vars::ACTION_ROWS_LIMIT)
         .build();
@@ -377,7 +376,7 @@ struct EditSoundModal {
     #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
     #[max_length = 500]
     name: String,
-    #[name = "Name"]
+    #[name = "Tags"]
     #[max_length = 1024]
     tags: Option<String>,
 }

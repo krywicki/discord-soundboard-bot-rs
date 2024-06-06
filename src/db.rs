@@ -637,8 +637,8 @@ impl Iterator for AudioTablePaginator {
 
 #[cfg(test)]
 mod tests {
+    use crate::helpers::{self, uuid_v4_str};
     use audio::AudioFile;
-    use rand::{distributions::Alphanumeric, Rng};
 
     use super::*;
 
@@ -672,22 +672,14 @@ mod tests {
         AudioTable::new(get_db_connection())
     }
 
-    fn rand_alpha_num() -> String {
-        rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(7)
-            .map(char::from)
-            .collect()
-    }
-
     fn make_audio_table_row_insert() -> AudioTableRowInsert {
         AudioTableRowInsert {
             audio_file: AudioFile::new(
-                path::Path::new(&format!("/tmp/{}.mp3", rand_alpha_num())).to_path_buf(),
+                path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
             ),
             author_global_name: None,
-            name: rand_alpha_num().into(),
-            tags: rand_alpha_num().into(),
+            name: uuid_v4_str().into(),
+            tags: uuid_v4_str().into(),
             created_at: chrono::Utc::now(),
             author_id: None,
             author_name: None,
