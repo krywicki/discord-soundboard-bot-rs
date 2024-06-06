@@ -10,7 +10,7 @@ use r2d2_sqlite::{
 };
 use regex::Regex;
 use rusqlite::types::FromSql;
-use rusqlite::{MappedRows, Row, ToSql};
+use rusqlite::{params, MappedRows, Row, ToSql};
 
 use crate::audio;
 use crate::commands::PoiseError;
@@ -25,6 +25,12 @@ pub struct AudioTableRow {
     pub author_id: Option<u64>,
     pub author_name: Option<String>,
     pub author_global_name: Option<String>,
+}
+
+impl AsRef<AudioTableRow> for AudioTableRow {
+    fn as_ref(&self) -> &AudioTableRow {
+        &self
+    }
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for AudioTableRow {
@@ -62,6 +68,12 @@ pub struct AudioTableRowInsert {
     pub author_id: Option<u64>,
     pub author_name: Option<String>,
     pub author_global_name: Option<String>,
+}
+
+impl AsRef<AudioTableRowInsert> for AudioTableRowInsert {
+    fn as_ref(&self) -> &AudioTableRowInsert {
+        &self
+    }
 }
 
 pub type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
@@ -126,6 +138,16 @@ pub enum UniqueAudioTableCol {
     AudioFile(String),
 }
 
+impl UniqueAudioTableCol {
+    pub fn value(&self) -> String {
+        match &self {
+            Self::Id(val) => val.to_string(),
+            Self::Name(val) => val.into(),
+            Self::AudioFile(val) => val.into(),
+        }
+    }
+}
+
 impl AsRef<UniqueAudioTableCol> for UniqueAudioTableCol {
     fn as_ref(&self) -> &UniqueAudioTableCol {
         &self
@@ -135,9 +157,9 @@ impl AsRef<UniqueAudioTableCol> for UniqueAudioTableCol {
 impl UniqueAudioTableCol {
     pub fn sql_condition(&self) -> String {
         match self {
-            Self::Id(id) => format!("id = '{id}' "),
-            Self::Name(name) => format!("name = '{name}' "),
-            Self::AudioFile(audio_file) => format!("audio_file = '{audio_file}' "),
+            Self::Id(id) => format!("id = ? "),
+            Self::Name(name) => format!("name = ? "),
+            Self::AudioFile(audio_file) => format!("audio_file = ? "),
         }
     }
 }
@@ -163,18 +185,26 @@ impl AudioTable {
 
     pub fn find_audio_row(&self, col: impl AsRef<UniqueAudioTableCol>) -> Option<AudioTableRow> {
         let col = col.as_ref();
+        let col_value = col.value();
         let table_name = Self::TABLE_NAME;
 
         let sql_condition = col.sql_condition();
         let sql = format!("SELECT * FROM {table_name} WHERE {sql_condition}");
 
         self.conn
-            .query_row(sql.as_str(), (), |row| AudioTableRow::try_from(row))
+            .query_row(sql.as_str(), params![&col_value], |row| {
+                AudioTableRow::try_from(row)
+            })
             .log_err_msg(format!("Failed to find audio row - {col:?}"))
             .ok()
     }
 
-    pub fn insert_audio_row(&self, audio_row: AudioTableRowInsert) -> Result<(), String> {
+    pub fn insert_audio_row(
+        &self,
+        audio_row: impl AsRef<AudioTableRowInsert>,
+    ) -> Result<(), String> {
+        let audio_row = audio_row.as_ref();
+
         log::info!(
             "Inserting audio row. Name: {}, File: {}",
             audio_row.name,
@@ -250,7 +280,8 @@ impl AudioTable {
         }
     }
 
-    pub fn update_audio_row(&self, audio_row: &AudioTableRow) -> Result<(), String> {
+    pub fn update_audio_row(&self, audio_row: impl AsRef<AudioTableRow>) -> Result<(), String> {
+        let audio_row = audio_row.as_ref();
         log::info!("Updating audio row. Name: {}", audio_row.name);
 
         let table_name = Self::TABLE_NAME;
@@ -262,15 +293,15 @@ impl AudioTable {
             "
             UPDATE {table_name}
             SET
-                name = '{name}',
-                tags = '{tags}'
+                name = ?,
+                tags = ?
             WHERE
-                id = {row_id};
+                id = ?;
         "
         );
 
         self.conn
-            .execute(sql.as_str(), ())
+            .execute(sql.as_str(), params![&name, &tags, &row_id])
             .log_err_msg("Failed updating audio track")
             .map_err(|err| err.to_string())?;
 
@@ -678,7 +709,7 @@ mod tests {
                 path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
             ),
             author_global_name: None,
-            name: uuid_v4_str().into(),
+            name: format!("{}{}", uuid_v4_str(), "#!@#$%^&*()_-+=?/.\"\\'"),
             tags: uuid_v4_str().into(),
             created_at: chrono::Utc::now(),
             author_id: None,
@@ -713,17 +744,42 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_get_row_test() {
+    fn audio_table_find_row_test() {
         let table = get_audio_table();
         table.create_table();
 
         let mut row_insert = make_audio_table_row_insert();
-        row_insert.name = "Test".into();
-        table.insert_audio_row(row_insert);
+        table.insert_audio_row(&row_insert).unwrap();
 
-        let row = table.find_audio_row(UniqueAudioTableCol::Name("Test".into()));
+        let row = table.find_audio_row(UniqueAudioTableCol::Name(row_insert.name.clone()));
         let row = row.unwrap();
-        assert_eq!(row.name, "Test".to_string());
+        assert_eq!(row.name, row_insert.name);
+    }
+
+    #[test]
+    fn audio_table_update_row_test() {
+        let table = get_audio_table();
+        table.create_table();
+
+        let mut row_insert = make_audio_table_row_insert();
+        table.insert_audio_row(&row_insert).unwrap();
+
+        let mut row = table
+            .find_audio_row(UniqueAudioTableCol::Name(row_insert.name.clone()))
+            .unwrap();
+
+        let new_name = String::from("New Name");
+        row.name = new_name.clone();
+        table.update_audio_row(&row).unwrap();
+
+        let old_row = table.find_audio_row(UniqueAudioTableCol::Name(row_insert.name.clone()));
+        assert!(old_row.is_none());
+
+        let updated_row = table
+            .find_audio_row(UniqueAudioTableCol::Name(new_name.clone()))
+            .unwrap();
+
+        assert_eq!(updated_row.name, new_name);
     }
 
     #[test]

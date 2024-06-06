@@ -94,12 +94,14 @@ impl IntoIterator for AudioDir {
 
 pub struct AudioFileValidator {
     max_dur: std::time::Duration,
+    reject_uuid_files: bool,
 }
 
 impl Default for AudioFileValidator {
     fn default() -> Self {
         Self {
             max_dur: crate::config::default_max_audio_file_duration(),
+            reject_uuid_files: true,
         }
     }
 }
@@ -111,6 +113,11 @@ impl AudioFileValidator {
 
     pub fn max_audio_duration(mut self, max_duration: std::time::Duration) -> Self {
         self.max_dur = max_duration;
+        self
+    }
+
+    pub fn reject_uuid_files(mut self, reject: bool) -> Self {
+        self.reject_uuid_files = reject;
         self
     }
 
@@ -126,12 +133,15 @@ impl AudioFileValidator {
             return Err("Audio file path isn't a file".into()).log_err();
         }
 
-        let stem = path.file_stem().ok_or("File missing stem")?;
-        let stem = stem.to_string_lossy();
-        if uuid::Uuid::parse_str(&stem).is_ok() {
-            return Err(
-                "Audio file had been added via discord comman, hence the UUID file stem".into(),
-            );
+        if self.reject_uuid_files {
+            let stem = path.file_stem().ok_or("File missing stem")?;
+            let stem = stem.to_string_lossy();
+            if uuid::Uuid::parse_str(&stem).is_ok() {
+                return Err(
+                    "Audio file had been added via discord comman, hence the UUID file stem".into(),
+                )
+                .log_err();
+            }
         }
 
         let track_info = probe_audio_track(&path).log_err()?;

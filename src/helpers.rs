@@ -384,24 +384,6 @@ pub async fn download_audio_url_temp(
     }
 
     Ok(audio_file_path)
-
-    // let track_info = audio::probe_audio_track(&audio_file_path)?;
-    // if track_info.duration >= Duration::seconds(7) {
-    //     return Err(format!(
-    //         "Audio track is too long: {:.2} seconds. Max allowed duration is {} seconds",
-    //         (track_info.duration.num_milliseconds() as f64) / 1000.0,
-    //         7,
-    //     ))
-    //     .log_err()?;
-    // }
-
-    // // move audio file to destination directory
-
-    // let final_audio_file_path = dest_dir.join(file_name.as_str());
-    // std::fs::copy(&audio_file_path, &final_audio_file_path)
-    //     .log_err_msg("Could not copy audio file to target dir")
-    //     .or(Err("Could not set audio file in target directory"))?;
-    // Ok(AudioFile::new(final_audio_file_path))
 }
 
 pub fn uuid_v4_str() -> String {
@@ -409,4 +391,14 @@ pub fn uuid_v4_str() -> String {
     let uuid = uuid::Uuid::new_v4();
     let mut encode_buf = uuid::Uuid::encode_buffer();
     uuid.hyphenated().encode_lower(&mut encode_buf).to_string()
+}
+
+pub trait EscapeSqlStr {
+    fn escape_sql_str(&self) -> String;
+}
+
+impl EscapeSqlStr for String {
+    fn escape_sql_str(&self) -> String {
+        self.replace("'", r"\'")
+    }
 }

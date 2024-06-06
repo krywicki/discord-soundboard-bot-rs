@@ -298,6 +298,7 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
             // validate audio track (codec type, length, etc)
             audio::AudioFileValidator::default()
                 .max_audio_duration(ctx.data().config.max_audio_file_duration)
+                .reject_uuid_files(false)
                 .validate(&temp_audio_file)?;
 
             // move track to sounds dir
