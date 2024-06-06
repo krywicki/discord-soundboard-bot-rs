@@ -1,16 +1,11 @@
 use std::borrow::Borrow;
-use std::path;
 
 use chrono;
-use futures::task;
+
 use r2d2_sqlite::rusqlite::OptionalExtension;
-use r2d2_sqlite::{
-    rusqlite::{self},
-    SqliteConnectionManager,
-};
+use r2d2_sqlite::rusqlite::{self};
 use regex::Regex;
-use rusqlite::types::FromSql;
-use rusqlite::{params, MappedRows, Row, ToSql};
+use rusqlite::params;
 
 use crate::audio;
 use crate::commands::PoiseError;
@@ -131,6 +126,7 @@ pub fn fts_prepare_search(text: impl AsRef<str>) -> String {
         .unwrap_or("".into())
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum UniqueAudioTableCol {
     Id(i64),
@@ -157,9 +153,9 @@ impl AsRef<UniqueAudioTableCol> for UniqueAudioTableCol {
 impl UniqueAudioTableCol {
     pub fn sql_condition(&self) -> String {
         match self {
-            Self::Id(id) => format!("id = ? "),
-            Self::Name(name) => format!("name = ? "),
-            Self::AudioFile(audio_file) => format!("audio_file = ? "),
+            Self::Id(_) => format!("id = ? "),
+            Self::Name(_) => format!("name = ? "),
+            Self::AudioFile(_) => format!("audio_file = ? "),
         }
     }
 }
@@ -167,6 +163,8 @@ impl UniqueAudioTableCol {
 pub trait Table {
     fn connection(&self) -> &Connection;
     fn create_table(&self);
+
+    #[allow(unused)]
     fn drop_table(&self);
 }
 
@@ -175,9 +173,8 @@ pub struct AudioTable {
 }
 
 impl AudioTable {
-    pub const DATETIME_FMT: &str = "%Y-%m-%d %H:%M:%SZ";
     pub const TABLE_NAME: &'static str = "audio";
-    pub const FTS5_TABLE_NAME: &str = "fts5_audio";
+    pub const FTS5_TABLE_NAME: &'static str = "fts5_audio";
 
     pub fn new(connection: Connection) -> Self {
         Self { conn: connection }
@@ -219,8 +216,7 @@ impl AudioTable {
                 (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
         );
 
-        let num_inserted = self
-            .connection()
+        self.connection()
             .execute(
                 sql.as_str(),
                 (
@@ -239,45 +235,6 @@ impl AudioTable {
             })?;
 
         Ok(())
-    }
-
-    pub fn has_audio_file(&self, audio_file: &path::PathBuf) -> bool {
-        let audio_file = audio_file.to_str().unwrap_or("<?>");
-
-        log::debug!("Checking for existence of audio_file: {}", audio_file);
-
-        let value: rusqlite::Result<String> = self.conn.query_row(
-            format!(
-                "
-                SELECT id FROM {table_name} WHERE audio_file = '{audio_file}'
-                ",
-                table_name = Self::TABLE_NAME,
-                audio_file = audio_file
-            )
-            .as_str(),
-            (),
-            |row| row.get(0),
-        );
-
-        match value.optional() {
-            Ok(val) => match val {
-                Some(v) => {
-                    log::debug!("Audio table does not contain audio file: {}", audio_file);
-                    true
-                }
-                None => {
-                    log::debug!("Audio table does contain audio file: {}", audio_file);
-                    false
-                }
-            },
-            Err(err) => {
-                log::error!(
-                    "Failed query row on table: {table_name} in has_audio_file",
-                    table_name = Self::TABLE_NAME
-                );
-                false
-            }
-        }
     }
 
     pub fn update_audio_row(&self, audio_row: impl AsRef<AudioTableRow>) -> Result<(), String> {
@@ -349,7 +306,8 @@ impl Table for AudioTable {
             .log_err_msg(format!(
                 "Failed dropping tables: {table_name}, {fts5_table_name}"
             ))
-            .log_ok_msg(format!("Dropped tables: {table_name}, {fts5_table_name}"));
+            .log_ok_msg(format!("Dropped tables: {table_name}, {fts5_table_name}"))
+            .unwrap();
     }
 
     fn create_table(&self) {
@@ -427,7 +385,7 @@ pub struct SettingsTable {
 }
 
 impl SettingsTable {
-    const TABLE_NAME: &str = "settings";
+    const TABLE_NAME: &'static str = "settings";
 
     pub fn new(connection: Connection) -> Self {
         Self { conn: connection }
@@ -537,10 +495,12 @@ impl Table for SettingsTable {
         self.conn
             .execute(sql.as_str(), ())
             .log_err_msg("Failed to drop table")
-            .log_ok_msg(format!("Dropped table {table_name}"));
+            .log_ok_msg(format!("Dropped table {table_name}"))
+            .unwrap();
     }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub enum AudioTableOrderBy {
     CreatedAt,
@@ -622,6 +582,7 @@ impl AudioTablePaginatorBuilder {
         }
     }
 
+    #[allow(unused)]
     pub fn order_by(mut self, value: AudioTableOrderBy) -> Self {
         self.order_by = value;
         self
@@ -647,7 +608,6 @@ impl Iterator for AudioTablePaginator {
 
     fn next(&mut self) -> Option<Self::Item> {
         let rows = self.next_page();
-        let mut is_empty = false;
 
         match rows {
             Ok(ref _rows) => {

@@ -1,25 +1,12 @@
-use std::borrow::BorrowMut;
-
-use poise::{command, CreateReply, Modal};
-use serenity::{
-    all::{
-        CreateActionRow, CreateButton, CreateInteractionResponse,
-        CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateMessage,
-        Message,
-    },
-    async_trait,
-};
+use poise::Modal;
+use serenity::{all::CreateMessage, async_trait};
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
-    audio::{self, play_audio_track, AudioFile, RemoveAudioFile, TrackHandleHelper},
+    audio::{self, AudioFile, RemoveAudioFile},
     common::{LogResult, UserData},
-    config::Config,
     db::{self, AudioTable, AudioTableRowInsert, FtsText},
-    helpers::{
-        self, check_msg, poise_check_msg, poise_songbird_get, ButtonCustomId, ButtonLabel,
-        PoiseContextHelper, SongbirdHelper,
-    },
+    helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
     vars,
 };
 
@@ -30,7 +17,7 @@ pub type PoiseResult = Result<(), PoiseError>;
 pub type PoiseAppContext<'a> = poise::ApplicationContext<'a, UserData, PoiseError>;
 
 #[poise::command(prefix_command, guild_only)]
-pub async fn deafen(ctx: PoiseContext<'_>) -> PoiseResult {
+pub async fn deafen(_ctx: PoiseContext<'_>) -> PoiseResult {
     Ok(())
 }
 
@@ -76,7 +63,8 @@ pub async fn join(ctx: PoiseContext<'_>) -> PoiseResult {
                     manager
                         .play_audio(guild_id, connect_to, &row.audio_file)
                         .await
-                        .log_err();
+                        .log_err()
+                        .ok();
                 }
                 None => log::error!("Couldn't locate join audio"),
             }
@@ -97,7 +85,7 @@ pub async fn leave(ctx: PoiseContext<'_>) -> PoiseResult {
     let channel_id = ctx.channel_id();
 
     match handler {
-        Some(handler) => {
+        Some(_handler) => {
             // if leave audio set, play exit audio track
             if let Ok(settings) = ctx.data().settings_table().get_settings().log_err() {
                 if let Some(ref leave_audio) = settings.leave_audio {
@@ -112,7 +100,8 @@ pub async fn leave(ctx: PoiseContext<'_>) -> PoiseResult {
                             manager
                                 .play_audio_to_end(guild_id, channel_id, &row.audio_file)
                                 .await
-                                .log_err();
+                                .log_err()
+                                .ok();
                         }
                         None => log::error!("Couldn't locate leave audio"),
                     }
@@ -175,7 +164,7 @@ pub async fn play(
         "set_leave_audio"
     )
 )]
-pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
+pub async fn sounds(_ctx: PoiseContext<'_>) -> PoiseResult {
     log::warn!("/sounds command shouldn't be invoked direclty. It should just house sub commands");
     Ok(())
 }
@@ -228,7 +217,7 @@ pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
         table
             .insert_audio_row(new_audio)
             .log_err()
-            .and_then(|val| {
+            .and_then(|_| {
                 inserted += 1;
                 Ok(())
             })
@@ -358,7 +347,6 @@ pub async fn display_sounds(ctx: PoiseContext<'_>) -> PoiseResult {
 
     for audio_rows in paginator {
         let audio_rows = audio_rows.log_err()?;
-        let mut action_grid: Vec<Vec<CreateActionRow>> = vec![];
 
         // ActionRows: Have a 5x5 grid limit
         // (https://discordjs.guide/message-components/action-rows.html#action-rows)
@@ -405,7 +393,7 @@ pub async fn edit_sound(
         let tags = tags.trim();
         match tags {
             "" => None,
-            val => Some(tags.to_string()),
+            _ => Some(tags.to_string()),
         }
     };
 

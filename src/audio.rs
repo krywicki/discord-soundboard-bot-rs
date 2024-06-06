@@ -3,42 +3,23 @@ use std::fs;
 use std::io::Write;
 use std::ops::Deref;
 use std::path;
-use std::sync::Arc;
 
-use chrono::{Duration, TimeDelta};
 use futures::StreamExt;
 use rusqlite::types::FromSql;
 use rusqlite::ToSql;
 use serenity::async_trait;
-use serenity::{
-    all::{ChannelId, GuildId},
-    client::Context,
-};
+
 use songbird::tracks::{PlayMode, TrackHandle};
-use songbird::Songbird;
-use symphonia::core::codecs::{self, CodecType, DecoderOptions};
+
+use symphonia::core::codecs;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 use crate::commands::PoiseError;
-use crate::commands::{PoiseContext, PoiseResult};
 use crate::common::LogResult;
-use crate::errors::AudioError;
 use crate::helpers;
-
-pub async fn play_audio_track(
-    manager: Arc<Songbird>,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    audio_track: impl AsRef<str>,
-) -> Result<TrackHandle, PoiseError> {
-    Err(AudioError::AudioTrackNotFound {
-        track: "?".to_string(),
-    }
-    .into())
-}
 
 pub async fn wait_for_audio_track_end(track_handle: &TrackHandle) {
     loop {
@@ -163,7 +144,7 @@ impl std::iter::Iterator for AudioDirIter {
     type Item = AudioFile;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut it = &mut self.0;
+        let it = &mut self.0;
 
         it.filter_map(|entry| entry.ok())
             .filter(|entry| entry.path().is_file())
@@ -182,10 +163,12 @@ impl AudioFile {
     }
 
     pub fn delete(&self) {
-        std::fs::remove_file(self.0.as_path()).log_err_msg(format!(
-            "Failed to delete audio file {}",
-            self.0.to_string_lossy()
-        ));
+        std::fs::remove_file(self.0.as_path())
+            .log_err_msg(format!(
+                "Failed to delete audio file {}",
+                self.0.to_string_lossy()
+            ))
+            .ok();
     }
 
     pub fn as_path_buf(&self) -> path::PathBuf {
@@ -279,7 +262,7 @@ pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrac
         .log_err_msg("Failed to probe format")?;
 
     // Get the format reader
-    let mut format = probed.format;
+    let format = probed.format;
 
     // Get the default track
     let track = format
@@ -323,13 +306,12 @@ pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathB
     let client = reqwest::Client::new();
 
     // HEAD request to ensure Content-Type == 'audio/mpeg'
-    let resp = client
+    let response = client
         .head(url)
         .send()
         .await
         .log_err_msg("Download audio url failed HTTP HEAD")?;
 
-    let response = reqwest::get(url).await?;
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)

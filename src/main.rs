@@ -1,9 +1,6 @@
-#![allow(warnings)]
-use std::path::{self, Path};
-use std::sync::Arc;
-use std::{env, fs};
+//#![allow(warnings)]
 
-use commands::{PoiseContext, PoiseResult};
+use commands::PoiseResult;
 use common::LogResult;
 use db::{AudioTable, SettingsTable, Table};
 use env_logger;
@@ -11,29 +8,16 @@ use log;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Client as HttpClient;
 use serenity::all::{
-    ApplicationId, ChannelId, CommandInteraction, ComponentInteraction,
-    ComponentInteractionDataKind, CreateActionRow, CreateButton, CreateEmbed,
-    CreateInteractionResponse, CreateMessage, Embed, FullEvent, GuildId, Interaction,
+    ApplicationId, ComponentInteraction, ComponentInteractionDataKind, CreateInteractionResponse,
+    FullEvent, Interaction,
 };
 use serenity::client::Context;
-use serenity::json::to_string;
-use serenity::model::channel;
+
 use serenity::{
-    async_trait,
-    client::{Client, EventHandler},
-    framework::{
-        standard::{
-            macros::{command, group},
-            Args, CommandResult, Configuration,
-        },
-        StandardFramework,
-    },
-    model::{channel::Message, gateway::Ready},
+    client::Client,
     prelude::{GatewayIntents, TypeMapKey},
-    Result as SerenityResult,
 };
-use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
-use songbird::tracks::{PlayMode, TrackHandle, TrackState};
+
 use songbird::SerenityInit;
 
 mod audio;
@@ -90,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
                 },
                 ..Default::default()
             })
-            .setup(|ctx, _ready, framework| {
+            .setup(|_ctx, _ready, _framework| {
                 Box::pin(async move {
                     //poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                     Ok(UserData {
@@ -154,9 +138,9 @@ async fn event_handler(
 }
 
 async fn handle_ready(
-    ctx: &Context,
+    _ctx: &Context,
     ready: &serenity::model::gateway::Ready,
-    framework: FrameworkContext<'_>,
+    _framework: FrameworkContext<'_>,
     data: &UserData,
 ) -> PoiseResult {
     log::info!(
@@ -217,9 +201,9 @@ async fn handle_component_interaction(
 
 async fn handle_btn_interaction(
     ctx: &Context,
-    interaction: &Interaction,
+    _interaction: &Interaction,
     component: &ComponentInteraction,
-    framework: FrameworkContext<'_>,
+    _framework: FrameworkContext<'_>,
     data: &UserData,
 ) -> PoiseResult {
     log::debug!("Interaction Component Button pressed");
@@ -227,7 +211,9 @@ async fn handle_btn_interaction(
 
     component
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await;
+        .await
+        .log_err_msg("Failed to create response for btn interaction")
+        .ok();
 
     match ButtonCustomId::try_from(custom_id.clone())? {
         ButtonCustomId::PlayAudio(audio_track_id) => {
@@ -252,7 +238,8 @@ async fn handle_btn_interaction(
                     let manager = helpers::songbird_get(&ctx).await;
                     manager
                         .play_audio(guild_id, channel_id, &audio_row.audio_file)
-                        .await;
+                        .await
+                        .ok();
                 }
                 None => {
                     return Err(format!(

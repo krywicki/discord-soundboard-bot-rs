@@ -1,4 +1,4 @@
-use std::{any::type_name, env, path, str::FromStr};
+use std::{env, path, str::FromStr};
 
 use serde::{Deserialize, Deserializer};
 
@@ -10,8 +10,6 @@ pub struct Config {
     pub audio_dir: path::PathBuf,
     #[serde(default = "default_command_prefix")]
     pub command_prefix: String,
-    pub join_audio: Option<String>,
-    pub leave_audio: Option<String>,
     #[serde(default = "default_sqlite_db_file")]
     pub sqlite_db_file: path::PathBuf,
     #[serde(
@@ -44,7 +42,7 @@ impl Config {
     pub fn validate(&self) {
         let mut errs: Vec<String> = vec![];
 
-        self.validate_audio_dir().map_err(|err| errs.push(err));
+        self.validate_audio_dir().map_err(|err| errs.push(err)).ok();
 
         if errs.len() > 0 {
             let err_msg: String = errs.iter().map(|err| format!("{err}\n")).collect();
@@ -78,8 +76,6 @@ impl Default for Config {
             token: "".into(),
             audio_dir: default_audio_dir(),
             command_prefix: default_command_prefix(),
-            join_audio: None,
-            leave_audio: None,
             sqlite_db_file: default_sqlite_db_file(),
             max_audio_file_duration: default_max_audio_file_duration(),
         }

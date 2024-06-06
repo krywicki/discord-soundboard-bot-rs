@@ -1,6 +1,6 @@
-use serenity::all::{ChannelId, GuildId};
 use thiserror::Error;
 
+#[allow(unused)]
 #[derive(Error, Debug)]
 pub enum AudioError {
     #[error("Audio Track not found - {track}")]
