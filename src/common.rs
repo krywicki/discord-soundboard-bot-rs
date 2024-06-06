@@ -166,7 +166,7 @@ mod tests {
         let mut encode_buf = uuid::Uuid::encode_buffer();
         let uuid = uuid.hyphenated().encode_lower(&mut encode_buf);
         let temp_dir = dir.join(uuid);
-        fs::create_dir(temp_dir.as_path()).expect("Failed creating temp directory");
+        std::fs::create_dir(temp_dir.as_path()).expect("Failed creating temp directory");
         temp_dir
     }
 

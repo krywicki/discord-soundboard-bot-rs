@@ -163,9 +163,6 @@ impl UniqueAudioTableCol {
 pub trait Table {
     fn connection(&self) -> &Connection;
     fn create_table(&self);
-
-    #[allow(unused)]
-    fn drop_table(&self);
 }
 
 pub struct AudioTable {
@@ -288,26 +285,6 @@ impl AudioTable {
 impl Table for AudioTable {
     fn connection(&self) -> &Connection {
         &self.conn
-    }
-
-    fn drop_table(&self) {
-        let table_name = Self::TABLE_NAME;
-        let fts5_table_name = Self::FTS5_TABLE_NAME;
-        let sql = format!(
-            "
-            BEGIN TRANSACTION
-                DROP TABLE {fts5_table_name};
-                DROP TABLE {table_name};
-            COMMIT;
-        "
-        );
-        self.connection()
-            .execute_batch(sql.as_str())
-            .log_err_msg(format!(
-                "Failed dropping tables: {table_name}, {fts5_table_name}"
-            ))
-            .log_ok_msg(format!("Dropped tables: {table_name}, {fts5_table_name}"))
-            .unwrap();
     }
 
     fn create_table(&self) {
@@ -486,18 +463,6 @@ impl Table for SettingsTable {
             .log_ok_msg(format!("Created table {table_name}"))
             .unwrap();
     }
-
-    fn drop_table(&self) {
-        let table_name = Self::TABLE_NAME;
-        log::info!("Dropping table: {table_name}");
-
-        let sql = format!("DROP TABLE {table_name}");
-        self.conn
-            .execute(sql.as_str(), ())
-            .log_err_msg("Failed to drop table")
-            .log_ok_msg(format!("Dropped table {table_name}"))
-            .unwrap();
-    }
 }
 
 #[allow(unused)]
@@ -630,6 +595,7 @@ impl Iterator for AudioTablePaginator {
 mod tests {
     use crate::helpers::{self, uuid_v4_str};
     use audio::AudioFile;
+    use r2d2_sqlite::SqliteConnectionManager;
 
     use super::*;
 
@@ -666,7 +632,7 @@ mod tests {
     fn make_audio_table_row_insert() -> AudioTableRowInsert {
         AudioTableRowInsert {
             audio_file: AudioFile::new(
-                path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
+                std::path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
             ),
             author_global_name: None,
             name: format!("{}{}", uuid_v4_str(), "#!@#$%^&*()_-+=?/.\"\\'"),
@@ -685,15 +651,6 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_drop_test() {
-        let table = get_audio_table();
-
-        table.drop_table(); // if no table(s) exist
-        table.create_table(); // make table(s)
-        table.drop_table(); // drop tables
-    }
-
-    #[test]
     fn audio_table_insert_row_test() {
         let table = get_audio_table();
 
@@ -708,7 +665,7 @@ mod tests {
         let table = get_audio_table();
         table.create_table();
 
-        let mut row_insert = make_audio_table_row_insert();
+        let row_insert = make_audio_table_row_insert();
         table.insert_audio_row(&row_insert).unwrap();
 
         let row = table.find_audio_row(UniqueAudioTableCol::Name(row_insert.name.clone()));
@@ -721,7 +678,7 @@ mod tests {
         let table = get_audio_table();
         table.create_table();
 
-        let mut row_insert = make_audio_table_row_insert();
+        let row_insert = make_audio_table_row_insert();
         table.insert_audio_row(&row_insert).unwrap();
 
         let mut row = table
@@ -779,14 +736,6 @@ mod tests {
         let table = get_settings_table();
         table.create_table();
         table.create_table();
-    }
-
-    #[test]
-    fn settings_table_drop_test() {
-        let table = get_settings_table();
-        table.drop_table();
-        table.create_table();
-        table.drop_table();
     }
 
     #[test]
