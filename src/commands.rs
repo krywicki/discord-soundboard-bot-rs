@@ -485,6 +485,7 @@ pub async fn display_help(ctx: PoiseContext<'_>) -> PoiseResult {
     let text = format!(
         "\
 # Soundboard Bot v{version}
+[GitHub Repo](https://github.com/krywicki/discord-soundboard-bot)
 Bot for playing sounds in voice chat.
 ## Slash Commands
 - `/play {{track}}` - Play sound track in voice channel
