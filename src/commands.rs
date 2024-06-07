@@ -7,7 +7,7 @@ use crate::{
     common::{LogResult, UserData},
     db::{self, AudioTable, AudioTableRowInsert, FtsText},
     helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
-    vars,
+    vars::{self},
 };
 
 pub type GenericError = Box<dyn std::error::Error + Send + Sync>;
@@ -137,7 +137,10 @@ pub async fn play(
     let row = table.find_audio_row(db::UniqueAudioTableCol::Name(audio_track_name.clone()));
     match row {
         Some(row) => {
-            poise_check_msg(ctx.reply(format!("Playing track {audio_track_name}")).await);
+            poise_check_msg(
+                ctx.reply(format!("Playing track `{audio_track_name}`"))
+                    .await,
+            );
             manager
                 .play_audio(guild_id, channel_id, &row.audio_file)
                 .await?;
@@ -252,7 +255,7 @@ struct AddSoundModal {
     #[name = "Name"] // Field name by default
     #[placeholder = "Use The Force Luke"] // No placeholder by default
     #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
-    #[max_length = 500]
+    #[max_length = 80] // Same as max button label len (crate::vars::BTN_LABEL_MAX_LEN)
     name: String,
 
     #[name = "Tags"] // Field name by default
@@ -364,7 +367,7 @@ pub async fn display_sounds(ctx: PoiseContext<'_>) -> PoiseResult {
 struct EditSoundModal {
     #[name = "Name"]
     #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
-    #[max_length = 500]
+    #[max_length = 80] // Same as max button label len (crate::vars::BTN_LABEL_MAX_LEN)
     name: String,
     #[name = "Tags"]
     #[max_length = 1024]
