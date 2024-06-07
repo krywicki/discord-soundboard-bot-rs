@@ -14,3 +14,7 @@ target/
 *.pdb
 .env
 .vscode/
+
+**/*.db3
+**/*.env
+**/*.http

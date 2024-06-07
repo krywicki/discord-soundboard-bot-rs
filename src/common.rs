@@ -1,4 +1,4 @@
-use std::{fs, path};
+use std::path;
 
 use crate::audio::{AudioDir, AudioFile};
 use crate::commands::PoiseError;
@@ -94,6 +94,7 @@ pub trait LogResult<T, E> {
     /// Logs  ok message as `'{msg}'` format, only on Ok results. Returns Result
     fn log_ok_msg(self, msg: impl AsRef<str>) -> Self;
     /// Calls op to create message for `log::info!()` only on Ok results. Returns Result
+    #[allow(unused)]
     fn log_ok_op(self, op: impl FnOnce(&T) -> String) -> Self;
 }
 
@@ -165,7 +166,7 @@ mod tests {
         let mut encode_buf = uuid::Uuid::encode_buffer();
         let uuid = uuid.hyphenated().encode_lower(&mut encode_buf);
         let temp_dir = dir.join(uuid);
-        fs::create_dir(temp_dir.as_path()).expect("Failed creating temp directory");
+        std::fs::create_dir(temp_dir.as_path()).expect("Failed creating temp directory");
         temp_dir
     }
 

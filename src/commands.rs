@@ -1,25 +1,12 @@
-use std::borrow::BorrowMut;
-
-use poise::{command, Modal};
-use serenity::{
-    all::{
-        CreateActionRow, CreateButton, CreateInteractionResponse,
-        CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateMessage,
-        Message,
-    },
-    async_trait,
-};
+use poise::Modal;
+use serenity::{all::CreateMessage, async_trait};
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
-    audio::{self, play_audio_track, AudioFile, RemoveAudioFile, TrackHandleHelper},
+    audio::{self, AudioFile, RemoveAudioFile},
     common::{LogResult, UserData},
-    config::Config,
     db::{self, AudioTable, AudioTableRowInsert, FtsText},
-    helpers::{
-        self, check_msg, poise_check_msg, poise_songbird_get, ButtonCustomId, ButtonLabel,
-        PoiseContextHelper, SongbirdHelper,
-    },
+    helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
     vars,
 };
 
@@ -30,7 +17,7 @@ pub type PoiseResult = Result<(), PoiseError>;
 pub type PoiseAppContext<'a> = poise::ApplicationContext<'a, UserData, PoiseError>;
 
 #[poise::command(prefix_command, guild_only)]
-pub async fn deafen(ctx: PoiseContext<'_>) -> PoiseResult {
+pub async fn deafen(_ctx: PoiseContext<'_>) -> PoiseResult {
     Ok(())
 }
 
@@ -76,7 +63,8 @@ pub async fn join(ctx: PoiseContext<'_>) -> PoiseResult {
                     manager
                         .play_audio(guild_id, connect_to, &row.audio_file)
                         .await
-                        .log_err();
+                        .log_err()
+                        .ok();
                 }
                 None => log::error!("Couldn't locate join audio"),
             }
@@ -97,7 +85,7 @@ pub async fn leave(ctx: PoiseContext<'_>) -> PoiseResult {
     let channel_id = ctx.channel_id();
 
     match handler {
-        Some(handler) => {
+        Some(_handler) => {
             // if leave audio set, play exit audio track
             if let Ok(settings) = ctx.data().settings_table().get_settings().log_err() {
                 if let Some(ref leave_audio) = settings.leave_audio {
@@ -112,7 +100,8 @@ pub async fn leave(ctx: PoiseContext<'_>) -> PoiseResult {
                             manager
                                 .play_audio_to_end(guild_id, channel_id, &row.audio_file)
                                 .await
-                                .log_err();
+                                .log_err()
+                                .ok();
                         }
                         None => log::error!("Couldn't locate leave audio"),
                     }
@@ -162,15 +151,6 @@ pub async fn play(
     Ok(())
 }
 
-// #[poise::command(prefix_command, guild_only)]
-// async fn list(ctx: PoiseContext<'_>, msg: &Message) -> PoiseResult {
-//     let audio_tracks_md = audio::list_audio_track_names_markdown();
-
-//     helpers::check_msg(msg.reply(ctx, audio_tracks_md).await);
-
-//     Ok(())
-// }
-
 #[poise::command(
     slash_command,
     prefix_command,
@@ -181,24 +161,29 @@ pub async fn play(
         "display_sounds",
         "edit_sound",
         "set_join_audio",
-        "set_leave_audio"
+        "set_leave_audio",
+        "display_help"
     )
 )]
-pub async fn sounds(ctx: PoiseContext<'_>) -> PoiseResult {
+pub async fn sounds(_ctx: PoiseContext<'_>) -> PoiseResult {
     log::warn!("/sounds command shouldn't be invoked direclty. It should just house sub commands");
     Ok(())
 }
-
-// #[poise::command(prefix_command, guild_only)]
-// async fn help(ctx: PoiseContext<'_>, msg: &Message) -> PoiseResult {
-//     Ok(())
-// }
 
 #[poise::command(prefix_command, guild_only)]
 pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
     log::info!("Scanning audio files...");
 
-    let mut audio_files: Vec<AudioFile> = ctx.data().read_audio_dir().into_iter().collect();
+    let audio_validator = audio::AudioFileValidator::new()
+        .max_audio_duration(ctx.data().config.max_audio_file_duration);
+
+    let mut audio_files: Vec<AudioFile> = ctx
+        .data()
+        .read_audio_dir()
+        .into_iter()
+        .filter(|f| audio_validator.validate(f.as_path()).is_ok())
+        .collect();
+
     let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection()).build();
 
     // ignore audio files already in database
@@ -214,6 +199,7 @@ pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
         "Scan found {} audio files to add to databse",
         audio_files.len()
     );
+
     let mut inserted = 0;
     let table = AudioTable::new(ctx.data().db_connection());
     for audio_file in audio_files {
@@ -232,7 +218,7 @@ pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
         table
             .insert_audio_row(new_audio)
             .log_err()
-            .and_then(|val| {
+            .and_then(|_| {
                 inserted += 1;
                 Ok(())
             })
@@ -301,8 +287,9 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
 
             // validate audio track (codec type, length, etc)
             audio::AudioFileValidator::default()
-                .max_audio_file_duration(ctx.data().config.max_audio_file_duration)
-                .validate_audio_file(&temp_audio_file)?;
+                .max_audio_duration(ctx.data().config.max_audio_file_duration)
+                .reject_uuid_files(false)
+                .validate(&temp_audio_file)?;
 
             // move track to sounds dir
             let audio_file = ctx.data().move_file_to_audio_dir(&temp_audio_file)?;
@@ -341,7 +328,7 @@ pub async fn remove_sound(
 
     table.delete_audio_row(db::UniqueAudioTableCol::Name(audio_track_name.clone()))?;
     poise_check_msg(
-        ctx.reply(format!("Deleted audio track '{audio_track_name}'"))
+        ctx.reply(format!("Removed audio track `{audio_track_name}`"))
             .await,
     );
 
@@ -352,13 +339,15 @@ pub async fn remove_sound(
 #[poise::command(slash_command, guild_only, rename = "display")]
 pub async fn display_sounds(ctx: PoiseContext<'_>) -> PoiseResult {
     log::info!("List sounds buttons as ActionRows grid...");
+
+    poise_check_msg(ctx.reply("Displaying sounds...").await);
+
     let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
         .page_limit(vars::ACTION_ROWS_LIMIT)
         .build();
 
     for audio_rows in paginator {
         let audio_rows = audio_rows.log_err()?;
-        let mut action_grid: Vec<Vec<CreateActionRow>> = vec![];
 
         // ActionRows: Have a 5x5 grid limit
         // (https://discordjs.guide/message-components/action-rows.html#action-rows)
@@ -377,7 +366,7 @@ struct EditSoundModal {
     #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
     #[max_length = 500]
     name: String,
-    #[name = "Name"]
+    #[name = "Tags"]
     #[max_length = 1024]
     tags: Option<String>,
 }
@@ -405,7 +394,7 @@ pub async fn edit_sound(
         let tags = tags.trim();
         match tags {
             "" => None,
-            val => Some(tags.to_string()),
+            _ => Some(tags.to_string()),
         }
     };
 
@@ -486,6 +475,35 @@ pub async fn set_leave_audio(
         }
     }
 
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "help")]
+pub async fn display_help(ctx: PoiseContext<'_>) -> PoiseResult {
+    let version = vars::VERSION;
+    let prefix = ctx.data().config.command_prefix.as_str();
+    let text = format!(
+        "\
+# Soundboard Bot v{version}
+Bot for playing sounds in voice chat.
+## Slash Commands
+- `/play {{track}}` - Play sound track in voice channel
+- `/sounds`
+  - `/sounds add` - Opens form to add sounds
+  - `/sounds remove {{track}}` - Removes sound
+  - `/sounds edit {{track}}` - Opens form to edit sound track
+  - `/sounds display` - Displays a button grid of sounds that can be played in voice channel
+  - `/sounds join-audio {{track}}` - Set/Unset sound track to play when bot joins voice channel
+  - `/sounds leave-audio {{track}}` - Set/Unset sound track to play when bot leaves voice channel
+## Prefix Commands
+- `{prefix}:join` - Have bot join the voice channel
+- `{prefix}:leave` - Have bot leave the voice channel
+- `{prefix}:register` - [`dev use`] Register/UnRegister slash commands for guild or globally
+- `{prefix}:scan` - [`dev use`] Scan local audio directory and add sound tracks not in database
+"
+    );
+
+    poise_check_msg(ctx.reply(text).await);
     Ok(())
 }
 

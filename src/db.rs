@@ -1,16 +1,11 @@
 use std::borrow::Borrow;
-use std::path;
 
 use chrono;
-use futures::task;
+
 use r2d2_sqlite::rusqlite::OptionalExtension;
-use r2d2_sqlite::{
-    rusqlite::{self},
-    SqliteConnectionManager,
-};
+use r2d2_sqlite::rusqlite::{self};
 use regex::Regex;
-use rusqlite::types::FromSql;
-use rusqlite::{MappedRows, Row, ToSql};
+use rusqlite::params;
 
 use crate::audio;
 use crate::commands::PoiseError;
@@ -25,6 +20,12 @@ pub struct AudioTableRow {
     pub author_id: Option<u64>,
     pub author_name: Option<String>,
     pub author_global_name: Option<String>,
+}
+
+impl AsRef<AudioTableRow> for AudioTableRow {
+    fn as_ref(&self) -> &AudioTableRow {
+        &self
+    }
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for AudioTableRow {
@@ -62,6 +63,12 @@ pub struct AudioTableRowInsert {
     pub author_id: Option<u64>,
     pub author_name: Option<String>,
     pub author_global_name: Option<String>,
+}
+
+impl AsRef<AudioTableRowInsert> for AudioTableRowInsert {
+    fn as_ref(&self) -> &AudioTableRowInsert {
+        &self
+    }
 }
 
 pub type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
@@ -119,11 +126,22 @@ pub fn fts_prepare_search(text: impl AsRef<str>) -> String {
         .unwrap_or("".into())
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum UniqueAudioTableCol {
     Id(i64),
     Name(String),
     AudioFile(String),
+}
+
+impl UniqueAudioTableCol {
+    pub fn value(&self) -> String {
+        match &self {
+            Self::Id(val) => val.to_string(),
+            Self::Name(val) => val.into(),
+            Self::AudioFile(val) => val.into(),
+        }
+    }
 }
 
 impl AsRef<UniqueAudioTableCol> for UniqueAudioTableCol {
@@ -135,9 +153,9 @@ impl AsRef<UniqueAudioTableCol> for UniqueAudioTableCol {
 impl UniqueAudioTableCol {
     pub fn sql_condition(&self) -> String {
         match self {
-            Self::Id(id) => format!("id = '{id}' "),
-            Self::Name(name) => format!("name = '{name}' "),
-            Self::AudioFile(audio_file) => format!("audio_file = '{audio_file}' "),
+            Self::Id(_) => format!("id = ? "),
+            Self::Name(_) => format!("name = ? "),
+            Self::AudioFile(_) => format!("audio_file = ? "),
         }
     }
 }
@@ -145,7 +163,6 @@ impl UniqueAudioTableCol {
 pub trait Table {
     fn connection(&self) -> &Connection;
     fn create_table(&self);
-    fn drop_table(&self);
 }
 
 pub struct AudioTable {
@@ -153,9 +170,8 @@ pub struct AudioTable {
 }
 
 impl AudioTable {
-    pub const DATETIME_FMT: &str = "%Y-%m-%d %H:%M:%SZ";
     pub const TABLE_NAME: &'static str = "audio";
-    pub const FTS5_TABLE_NAME: &str = "fts5_audio";
+    pub const FTS5_TABLE_NAME: &'static str = "fts5_audio";
 
     pub fn new(connection: Connection) -> Self {
         Self { conn: connection }
@@ -163,18 +179,26 @@ impl AudioTable {
 
     pub fn find_audio_row(&self, col: impl AsRef<UniqueAudioTableCol>) -> Option<AudioTableRow> {
         let col = col.as_ref();
+        let col_value = col.value();
         let table_name = Self::TABLE_NAME;
 
         let sql_condition = col.sql_condition();
         let sql = format!("SELECT * FROM {table_name} WHERE {sql_condition}");
 
         self.conn
-            .query_row(sql.as_str(), (), |row| AudioTableRow::try_from(row))
+            .query_row(sql.as_str(), params![&col_value], |row| {
+                AudioTableRow::try_from(row)
+            })
             .log_err_msg(format!("Failed to find audio row - {col:?}"))
             .ok()
     }
 
-    pub fn insert_audio_row(&self, audio_row: AudioTableRowInsert) -> Result<(), String> {
+    pub fn insert_audio_row(
+        &self,
+        audio_row: impl AsRef<AudioTableRowInsert>,
+    ) -> Result<(), String> {
+        let audio_row = audio_row.as_ref();
+
         log::info!(
             "Inserting audio row. Name: {}, File: {}",
             audio_row.name,
@@ -189,8 +213,7 @@ impl AudioTable {
                 (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
         );
 
-        let num_inserted = self
-            .connection()
+        self.connection()
             .execute(
                 sql.as_str(),
                 (
@@ -211,46 +234,8 @@ impl AudioTable {
         Ok(())
     }
 
-    pub fn has_audio_file(&self, audio_file: &path::PathBuf) -> bool {
-        let audio_file = audio_file.to_str().unwrap_or("<?>");
-
-        log::debug!("Checking for existence of audio_file: {}", audio_file);
-
-        let value: rusqlite::Result<String> = self.conn.query_row(
-            format!(
-                "
-                SELECT id FROM {table_name} WHERE audio_file = '{audio_file}'
-                ",
-                table_name = Self::TABLE_NAME,
-                audio_file = audio_file
-            )
-            .as_str(),
-            (),
-            |row| row.get(0),
-        );
-
-        match value.optional() {
-            Ok(val) => match val {
-                Some(v) => {
-                    log::debug!("Audio table does not contain audio file: {}", audio_file);
-                    true
-                }
-                None => {
-                    log::debug!("Audio table does contain audio file: {}", audio_file);
-                    false
-                }
-            },
-            Err(err) => {
-                log::error!(
-                    "Failed query row on table: {table_name} in has_audio_file",
-                    table_name = Self::TABLE_NAME
-                );
-                false
-            }
-        }
-    }
-
-    pub fn update_audio_row(&self, audio_row: &AudioTableRow) -> Result<(), String> {
+    pub fn update_audio_row(&self, audio_row: impl AsRef<AudioTableRow>) -> Result<(), String> {
+        let audio_row = audio_row.as_ref();
         log::info!("Updating audio row. Name: {}", audio_row.name);
 
         let table_name = Self::TABLE_NAME;
@@ -262,15 +247,15 @@ impl AudioTable {
             "
             UPDATE {table_name}
             SET
-                name = '{name}',
-                tags = '{tags}'
+                name = ?,
+                tags = ?
             WHERE
-                id = {row_id};
+                id = ?;
         "
         );
 
         self.conn
-            .execute(sql.as_str(), ())
+            .execute(sql.as_str(), params![&name, &tags, &row_id])
             .log_err_msg("Failed updating audio track")
             .map_err(|err| err.to_string())?;
 
@@ -300,25 +285,6 @@ impl AudioTable {
 impl Table for AudioTable {
     fn connection(&self) -> &Connection {
         &self.conn
-    }
-
-    fn drop_table(&self) {
-        let table_name = Self::TABLE_NAME;
-        let fts5_table_name = Self::FTS5_TABLE_NAME;
-        let sql = format!(
-            "
-            BEGIN TRANSACTION
-                DROP TABLE {fts5_table_name};
-                DROP TABLE {table_name};
-            COMMIT;
-        "
-        );
-        self.connection()
-            .execute_batch(sql.as_str())
-            .log_err_msg(format!(
-                "Failed dropping tables: {table_name}, {fts5_table_name}"
-            ))
-            .log_ok_msg(format!("Dropped tables: {table_name}, {fts5_table_name}"));
     }
 
     fn create_table(&self) {
@@ -396,7 +362,7 @@ pub struct SettingsTable {
 }
 
 impl SettingsTable {
-    const TABLE_NAME: &str = "settings";
+    const TABLE_NAME: &'static str = "settings";
 
     pub fn new(connection: Connection) -> Self {
         Self { conn: connection }
@@ -497,19 +463,9 @@ impl Table for SettingsTable {
             .log_ok_msg(format!("Created table {table_name}"))
             .unwrap();
     }
-
-    fn drop_table(&self) {
-        let table_name = Self::TABLE_NAME;
-        log::info!("Dropping table: {table_name}");
-
-        let sql = format!("DROP TABLE {table_name}");
-        self.conn
-            .execute(sql.as_str(), ())
-            .log_err_msg("Failed to drop table")
-            .log_ok_msg(format!("Dropped table {table_name}"));
-    }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub enum AudioTableOrderBy {
     CreatedAt,
@@ -591,6 +547,7 @@ impl AudioTablePaginatorBuilder {
         }
     }
 
+    #[allow(unused)]
     pub fn order_by(mut self, value: AudioTableOrderBy) -> Self {
         self.order_by = value;
         self
@@ -616,7 +573,6 @@ impl Iterator for AudioTablePaginator {
 
     fn next(&mut self) -> Option<Self::Item> {
         let rows = self.next_page();
-        let mut is_empty = false;
 
         match rows {
             Ok(ref _rows) => {
@@ -637,8 +593,9 @@ impl Iterator for AudioTablePaginator {
 
 #[cfg(test)]
 mod tests {
+    use crate::helpers::{self, uuid_v4_str};
     use audio::AudioFile;
-    use rand::{distributions::Alphanumeric, Rng};
+    use r2d2_sqlite::SqliteConnectionManager;
 
     use super::*;
 
@@ -672,22 +629,14 @@ mod tests {
         AudioTable::new(get_db_connection())
     }
 
-    fn rand_alpha_num() -> String {
-        rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(7)
-            .map(char::from)
-            .collect()
-    }
-
     fn make_audio_table_row_insert() -> AudioTableRowInsert {
         AudioTableRowInsert {
             audio_file: AudioFile::new(
-                path::Path::new(&format!("/tmp/{}.mp3", rand_alpha_num())).to_path_buf(),
+                std::path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
             ),
             author_global_name: None,
-            name: rand_alpha_num().into(),
-            tags: rand_alpha_num().into(),
+            name: format!("{}{}", uuid_v4_str(), "#!@#$%^&*()_-+=?/.\"\\'"),
+            tags: uuid_v4_str().into(),
             created_at: chrono::Utc::now(),
             author_id: None,
             author_name: None,
@@ -702,15 +651,6 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_drop_test() {
-        let table = get_audio_table();
-
-        table.drop_table(); // if no table(s) exist
-        table.create_table(); // make table(s)
-        table.drop_table(); // drop tables
-    }
-
-    #[test]
     fn audio_table_insert_row_test() {
         let table = get_audio_table();
 
@@ -721,17 +661,42 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_get_row_test() {
+    fn audio_table_find_row_test() {
         let table = get_audio_table();
         table.create_table();
 
-        let mut row_insert = make_audio_table_row_insert();
-        row_insert.name = "Test".into();
-        table.insert_audio_row(row_insert);
+        let row_insert = make_audio_table_row_insert();
+        table.insert_audio_row(&row_insert).unwrap();
 
-        let row = table.find_audio_row(UniqueAudioTableCol::Name("Test".into()));
+        let row = table.find_audio_row(UniqueAudioTableCol::Name(row_insert.name.clone()));
         let row = row.unwrap();
-        assert_eq!(row.name, "Test".to_string());
+        assert_eq!(row.name, row_insert.name);
+    }
+
+    #[test]
+    fn audio_table_update_row_test() {
+        let table = get_audio_table();
+        table.create_table();
+
+        let row_insert = make_audio_table_row_insert();
+        table.insert_audio_row(&row_insert).unwrap();
+
+        let mut row = table
+            .find_audio_row(UniqueAudioTableCol::Name(row_insert.name.clone()))
+            .unwrap();
+
+        let new_name = String::from("New Name");
+        row.name = new_name.clone();
+        table.update_audio_row(&row).unwrap();
+
+        let old_row = table.find_audio_row(UniqueAudioTableCol::Name(row_insert.name.clone()));
+        assert!(old_row.is_none());
+
+        let updated_row = table
+            .find_audio_row(UniqueAudioTableCol::Name(new_name.clone()))
+            .unwrap();
+
+        assert_eq!(updated_row.name, new_name);
     }
 
     #[test]
@@ -771,14 +736,6 @@ mod tests {
         let table = get_settings_table();
         table.create_table();
         table.create_table();
-    }
-
-    #[test]
-    fn settings_table_drop_test() {
-        let table = get_settings_table();
-        table.drop_table();
-        table.create_table();
-        table.drop_table();
     }
 
     #[test]

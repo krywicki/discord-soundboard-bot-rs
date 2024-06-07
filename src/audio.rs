@@ -3,42 +3,23 @@ use std::fs;
 use std::io::Write;
 use std::ops::Deref;
 use std::path;
-use std::sync::Arc;
 
-use chrono::{Duration, TimeDelta};
 use futures::StreamExt;
 use rusqlite::types::FromSql;
 use rusqlite::ToSql;
 use serenity::async_trait;
-use serenity::{
-    all::{ChannelId, GuildId},
-    client::Context,
-};
+
 use songbird::tracks::{PlayMode, TrackHandle};
-use songbird::Songbird;
-use symphonia::core::codecs::{self, CodecType, DecoderOptions};
+
+use symphonia::core::codecs;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 use crate::commands::PoiseError;
-use crate::commands::{PoiseContext, PoiseResult};
 use crate::common::LogResult;
-use crate::errors::AudioError;
 use crate::helpers;
-
-pub async fn play_audio_track(
-    manager: Arc<Songbird>,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    audio_track: impl AsRef<str>,
-) -> Result<TrackHandle, PoiseError> {
-    Err(AudioError::AudioTrackNotFound {
-        track: "?".to_string(),
-    }
-    .into())
-}
 
 pub async fn wait_for_audio_track_end(track_handle: &TrackHandle) {
     loop {
@@ -67,9 +48,7 @@ impl TrackHandleHelper for TrackHandle {
     }
 }
 
-pub struct AudioDir {
-    dir_path: path::PathBuf,
-}
+pub struct AudioDir(path::PathBuf);
 
 impl AudioDir {
     pub fn new(dir_path: path::PathBuf) -> Self {
@@ -80,7 +59,7 @@ impl AudioDir {
             );
         }
 
-        Self { dir_path: dir_path }
+        Self(dir_path)
     }
 }
 
@@ -89,8 +68,73 @@ impl IntoIterator for AudioDir {
     type IntoIter = AudioDirIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        let entries = fs::read_dir(&self.dir_path).expect("Failed to fs::read_dir for AudioDir");
+        let entries = fs::read_dir(&self.0).expect("Failed to fs::read_dir for AudioDir");
         AudioDirIter(entries.into_iter())
+    }
+}
+
+pub struct AudioFileValidator {
+    max_dur: std::time::Duration,
+    reject_uuid_files: bool,
+}
+
+impl Default for AudioFileValidator {
+    fn default() -> Self {
+        Self {
+            max_dur: crate::config::default_max_audio_file_duration(),
+            reject_uuid_files: true,
+        }
+    }
+}
+
+impl AudioFileValidator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn max_audio_duration(mut self, max_duration: std::time::Duration) -> Self {
+        self.max_dur = max_duration;
+        self
+    }
+
+    pub fn reject_uuid_files(mut self, reject: bool) -> Self {
+        self.reject_uuid_files = reject;
+        self
+    }
+
+    pub fn validate(&self, path: impl AsRef<path::Path>) -> Result<(), PoiseError> {
+        let path = path.as_ref();
+        log::info!("Validating audio file: {}", path.to_string_lossy());
+
+        if !path.exists() {
+            return Err("Audio file path doesn't exist".into()).log_err();
+        }
+
+        if !path.is_file() {
+            return Err("Audio file path isn't a file".into()).log_err();
+        }
+
+        if self.reject_uuid_files {
+            let stem = path.file_stem().ok_or("File missing stem")?;
+            let stem = stem.to_string_lossy();
+            if uuid::Uuid::parse_str(&stem).is_ok() {
+                return Err(
+                    "Audio file had been added via discord comman, hence the UUID file stem".into(),
+                )
+                .log_err();
+            }
+        }
+
+        let track_info = probe_audio_track(&path).log_err()?;
+        let track_dur = &track_info.duration;
+
+        if track_dur > &self.max_dur {
+            let track_dur = track_dur.as_secs_f64();
+            let max_dur = self.max_dur.as_secs_f64();
+            return Err(format!("Audio track is {track_dur:.2}s long. This exceeds the max duration of {max_dur:.2}s").into()).log_err();
+        }
+
+        Ok(())
     }
 }
 
@@ -100,7 +144,7 @@ impl std::iter::Iterator for AudioDirIter {
     type Item = AudioFile;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut it = &mut self.0;
+        let it = &mut self.0;
 
         it.filter_map(|entry| entry.ok())
             .filter(|entry| entry.path().is_file())
@@ -119,10 +163,12 @@ impl AudioFile {
     }
 
     pub fn delete(&self) {
-        std::fs::remove_file(self.0.as_path()).log_err_msg(format!(
-            "Failed to delete audio file {}",
-            self.0.to_string_lossy()
-        ));
+        std::fs::remove_file(self.0.as_path())
+            .log_err_msg(format!(
+                "Failed to delete audio file {}",
+                self.0.to_string_lossy()
+            ))
+            .ok();
     }
 
     pub fn as_path_buf(&self) -> path::PathBuf {
@@ -194,12 +240,13 @@ impl RemoveAudioFile for Vec<AudioFile> {
 pub struct AudioTrackInfo {
     pub duration: std::time::Duration,
 }
+
 pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrackInfo, PoiseError> {
     let path = audio_file.as_ref();
 
     log::info!("Probing audio-track: {}", path.to_string_lossy());
 
-    let file = std::fs::File::open(path).log_err()?;
+    let file: fs::File = std::fs::File::open(path).log_err()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::default();
     hint.with_extension("mp3");
@@ -215,7 +262,7 @@ pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrac
         .log_err_msg("Failed to probe format")?;
 
     // Get the format reader
-    let mut format = probed.format;
+    let format = probed.format;
 
     // Get the default track
     let track = format
@@ -233,25 +280,21 @@ pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrac
         .log_err();
     }
 
-    // Create a decoder for the track
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .log_err_msg("Failed to create audio decoder")?;
+    let track_time_base = track
+        .codec_params
+        .time_base
+        .ok_or("Couldn't find audio track time base")?
+        .calc_time(
+            track
+                .codec_params
+                .n_frames
+                .ok_or("Couldn't get number of frames for audio track")?,
+        );
 
-    // Decode the packets and calculate the duration
-    let mut duration: f64 = 0.0;
-    while let Ok(packet) = format.next_packet() {
-        // Decode the packet
-        if let Ok(audio_buffer) = decoder.decode(&packet) {
-            // Add the duration of this packet
-            duration += audio_buffer.frames() as f64 / audio_buffer.spec().rate as f64;
-        }
-    }
-
-    let duration_ms = (duration * 1000.0) as u64;
-    log::info!("Audio track duration = {duration:.2} seconds");
+    let duration_s = track_time_base.seconds as f64 + track_time_base.frac;
+    log::info!("Audio track duration = {duration_s:.2}s");
     Ok(AudioTrackInfo {
-        duration: std::time::Duration::from_millis(duration_ms),
+        duration: std::time::Duration::from_secs_f64(duration_s),
     })
 }
 
@@ -263,13 +306,12 @@ pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathB
     let client = reqwest::Client::new();
 
     // HEAD request to ensure Content-Type == 'audio/mpeg'
-    let resp = client
+    let response = client
         .head(url)
         .send()
         .await
         .log_err_msg("Download audio url failed HTTP HEAD")?;
 
-    let response = reqwest::get(url).await?;
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -309,63 +351,4 @@ pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathB
     }
 
     Ok(audio_file_path)
-
-    // let track_info = audio::probe_audio_track(&audio_file_path)?;
-    // if track_info.duration >= Duration::seconds(7) {
-    //     return Err(format!(
-    //         "Audio track is too long: {:.2} seconds. Max allowed duration is {} seconds",
-    //         (track_info.duration.num_milliseconds() as f64) / 1000.0,
-    //         7,
-    //     ))
-    //     .log_err()?;
-    // }
-
-    // // move audio file to destination directory
-
-    // let final_audio_file_path = dest_dir.join(file_name.as_str());
-    // std::fs::copy(&audio_file_path, &final_audio_file_path)
-    //     .log_err_msg("Could not copy audio file to target dir")
-    //     .or(Err("Could not set audio file in target directory"))?;
-    // Ok(AudioFile::new(final_audio_file_path))
-}
-
-pub struct AudioFileValidator {
-    max_audio_file_duration: std::time::Duration,
-}
-
-impl Default for AudioFileValidator {
-    fn default() -> Self {
-        Self {
-            max_audio_file_duration: crate::config::default_max_audio_file_duration(),
-        }
-    }
-}
-
-impl AudioFileValidator {
-    pub fn max_audio_file_duration(mut self, duration: std::time::Duration) -> Self {
-        self.max_audio_file_duration = duration;
-        self
-    }
-
-    pub fn validate_audio_file(&self, path: impl AsRef<path::Path>) -> Result<(), PoiseError> {
-        let audio_file = path.as_ref();
-        log::info!("Validating audio file: {}", audio_file.to_string_lossy());
-
-        if !audio_file.exists() {
-            return Err("Audio file doesn't exist".into()).log_err();
-        }
-
-        if !audio_file.is_file() {
-            return Err("Audio file path isn't a file".into()).log_err();
-        }
-
-        let track_info = probe_audio_track(&audio_file)?;
-        if track_info.duration > self.max_audio_file_duration {
-            let track_dur = track_info.duration.as_secs_f64();
-            let max_dur = self.max_audio_file_duration.as_secs_f64();
-            return Err(format!("Audio track is {track_dur:.2}s long. This exceeds the max duration of {max_dur:.2}s").into()).log_err();
-        }
-
-        Ok(())
-    }
 }
