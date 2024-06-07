@@ -161,7 +161,8 @@ pub async fn play(
         "display_sounds",
         "edit_sound",
         "set_join_audio",
-        "set_leave_audio"
+        "set_leave_audio",
+        "display_help"
     )
 )]
 pub async fn sounds(_ctx: PoiseContext<'_>) -> PoiseResult {
@@ -327,7 +328,7 @@ pub async fn remove_sound(
 
     table.delete_audio_row(db::UniqueAudioTableCol::Name(audio_track_name.clone()))?;
     poise_check_msg(
-        ctx.reply(format!("Deleted audio track '{audio_track_name}'"))
+        ctx.reply(format!("Removed audio track `{audio_track_name}`"))
             .await,
     );
 
@@ -474,6 +475,35 @@ pub async fn set_leave_audio(
         }
     }
 
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "help")]
+pub async fn display_help(ctx: PoiseContext<'_>) -> PoiseResult {
+    let version = vars::VERSION;
+    let prefix = ctx.data().config.command_prefix.as_str();
+    let text = format!(
+        "\
+# Soundboard Bot v{version}
+Bot for playing sounds in voice chat.
+## Slash Commands
+- `/play {{track}}` - Play sound track in voice channel
+- `/sounds`
+  - `/sounds add` - Opens form to add sounds
+  - `/sounds remove {{track}}` - Removes sound
+  - `/sounds edit {{track}}` - Opens form to edit sound track
+  - `/sounds display` - Displays a button grid of sounds that can be played in voice channel
+  - `/sounds join-audio {{track}}` - Set/Unset sound track to play when bot joins voice channel
+  - `/sounds leave-audio {{track}}` - Set/Unset sound track to play when bot leaves voice channel
+## Prefix Commands
+- `{prefix}:join` - Have bot join the voice channel
+- `{prefix}:leave` - Have bot leave the voice channel
+- `{prefix}:register` - [`dev use`] Register/UnRegister slash commands for guild or globally
+- `{prefix}:scan` - [`dev use`] Scan local audio directory and add sound tracks not in database
+"
+    );
+
+    poise_check_msg(ctx.reply(text).await);
     Ok(())
 }
 
