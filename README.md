@@ -20,14 +20,14 @@ The simple steps to using the soundboard-bot are as follows...
 - [A Registered Discord Bot](https://discord.com/developers/docs/quick-start/getting-started)
 
 ## Slash Commands
-- `/play {{track}}` - Play sound track in voice channel
+- `/play {track}` - Play sound track in voice channel
 - `/sounds`
   - `/sounds add` - Opens form to add sounds
-  - `/sounds remove {{track}}` - Removes sound
-  - `/sounds edit {{track}}` - Opens form to edit sound track
+  - `/sounds remove {track}` - Removes sound
+  - `/sounds edit {track}` - Opens form to edit sound track
   - `/sounds display` - Displays a button grid of sounds that can be played in voice channel
-  - `/sounds join-audio {{track}}` - Set/Unset sound track to play when bot joins voice channel
-  - `/sounds leave-audio {{track}}` - Set/Unset sound track to play when bot leaves voice channel
+  - `/sounds join-audio {track}` - Set/Unset sound track to play when bot joins voice channel
+  - `/sounds leave-audio {track}` - Set/Unset sound track to play when bot leaves voice channel
 
 ## Prefix Commands
 - `{prefix}:join` - Have bot join the voice channel
