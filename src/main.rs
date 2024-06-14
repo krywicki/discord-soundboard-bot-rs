@@ -1,5 +1,4 @@
-//#![allow(warnings)]
-
+#![allow(warnings)]
 use commands::PoiseResult;
 use common::LogResult;
 use db::{AudioTable, SettingsTable, Table};

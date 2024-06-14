@@ -19,7 +19,7 @@ use symphonia::core::probe::Hint;
 
 use crate::commands::PoiseError;
 use crate::common::LogResult;
-use crate::helpers;
+use crate::helpers::{self, TitleCase};
 
 pub async fn wait_for_audio_track_end(track_handle: &TrackHandle) {
     loop {
@@ -186,7 +186,9 @@ impl AudioFile {
 
     pub fn audio_title(&self) -> String {
         let stem = self.file_stem();
-        stem.replace("_", " ").replace("-", " ")
+        let stem = stem.replace("_", " ").replace("-", " ");
+
+        stem.to_title_case()
     }
 }
 
@@ -351,4 +353,15 @@ pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathB
     }
 
     Ok(audio_file_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_file_test() {
+        let f = AudioFile::new(path::PathBuf::from("/tmp/once-Upon a_time.mp3"));
+        assert_eq!("Once Upon A Time", f.audio_title());
+    }
 }

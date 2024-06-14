@@ -1,11 +1,13 @@
 use std::borrow::Borrow;
+use std::ops::Deref;
 
 use chrono;
 
 use r2d2_sqlite::rusqlite::OptionalExtension;
 use r2d2_sqlite::rusqlite::{self};
 use regex::Regex;
-use rusqlite::params;
+use rusqlite::types::FromSql;
+use rusqlite::{params, ToSql};
 
 use crate::audio;
 use crate::commands::PoiseError;
@@ -14,12 +16,84 @@ use crate::common::LogResult;
 pub struct AudioTableRow {
     pub id: i64,
     pub name: String,
-    pub tags: String,
+    pub tags: Tags,
     pub audio_file: audio::AudioFile,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub author_id: Option<u64>,
     pub author_name: Option<String>,
     pub author_global_name: Option<String>,
+}
+
+pub struct Tags(Vec<String>);
+
+impl Tags {
+    pub fn new() -> Self {
+        Tags(vec![])
+    }
+
+    pub fn clean_tag(value: impl AsRef<str>) -> String {
+        let text = value.as_ref();
+        let re = Regex::new(r"[^a-zA-Z0-9-_\s]").unwrap();
+        let text = re.replace_all(text, " ");
+        let text = text.trim();
+
+        text.into()
+    }
+
+    pub fn inner(&self) -> &Vec<String> {
+        &self.0
+    }
+}
+
+impl Deref for Tags {
+    type Target = Vec<String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ToString for Tags {
+    fn to_string(&self) -> String {
+        self.join(" ")
+    }
+}
+
+impl From<&str> for Tags {
+    fn from(value: &str) -> Self {
+        let tags = value.split_whitespace().map(Self::clean_tag).collect();
+        Tags(tags)
+    }
+}
+
+impl From<String> for Tags {
+    fn from(value: String) -> Self {
+        Tags::from(value.as_str())
+    }
+}
+
+impl From<Vec<String>> for Tags {
+    fn from(value: Vec<String>) -> Self {
+        Tags(value)
+    }
+}
+
+impl ToSql for Tags {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        match self.len() {
+            0 => rusqlite::types::Null.to_sql(),
+            _ => Ok(rusqlite::types::ToSqlOutput::Owned(self.to_string().into())),
+        }
+    }
+}
+
+impl FromSql for Tags {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value.as_str_or_null()? {
+            Some(val) => Ok(Tags::from(val)),
+            None => Ok(Tags::new()),
+        }
+    }
 }
 
 impl AsRef<AudioTableRow> for AudioTableRow {
@@ -57,7 +131,7 @@ impl TryFrom<&rusqlite::Row<'_>> for AudioTableRow {
 
 pub struct AudioTableRowInsert {
     pub name: String,
-    pub tags: String,
+    pub tags: Tags,
     pub audio_file: audio::AudioFile,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub author_id: Option<u64>,
@@ -76,6 +150,7 @@ pub type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManage
 pub trait FtsText {
     fn fts_clean(&self) -> String;
     fn fts_prepare_search(&self) -> String;
+    fn fts_clean_tags(&self) -> String;
 }
 
 impl FtsText for String {
@@ -85,6 +160,10 @@ impl FtsText for String {
 
     fn fts_prepare_search(&self) -> String {
         fts_prepare_search(fts_clean_text(&self))
+    }
+
+    fn fts_clean_tags(&self) -> String {
+        fts_clean_tags(&self)
     }
 }
 
@@ -96,6 +175,20 @@ impl<'a> FtsText for &'a str {
     fn fts_prepare_search(&self) -> String {
         fts_prepare_search(fts_clean_text(&self))
     }
+
+    fn fts_clean_tags(&self) -> String {
+        fts_clean_tags(&self)
+    }
+}
+
+pub fn fts_clean_tags(text: impl AsRef<str>) -> String {
+    let text = text.as_ref();
+
+    let re = Regex::new(r"[^a-zA-Z0-9 ]").unwrap();
+    let text = re.replace_all(text, " ");
+    let text = text.trim();
+
+    text.into()
 }
 
 pub fn fts_clean_text(text: impl AsRef<str>) -> String {
@@ -167,6 +260,25 @@ pub trait Table {
 
 pub struct AudioTable {
     conn: Connection,
+}
+
+pub struct AudioTableQuery(String);
+
+pub enum Order {
+    Ascending,
+    Descending,
+}
+
+pub enum OrderBy {
+    Name(Order),
+    Date(Order),
+}
+
+pub struct AudioTableQueryBuilder {
+    id: Option<i64>,
+    name: Option<String>,
+    tags: Option<String>,
+    order_by: Option<OrderBy>,
 }
 
 impl AudioTable {
@@ -299,7 +411,7 @@ impl Table for AudioTable {
                 CREATE TABLE IF NOT EXISTS {table_name} (
                     id INTEGER PRIMARY KEY,
                     name VARCHAR(80) NOT NULL UNIQUE,
-                    tags VARCHAR(2048) NOT NULL,
+                    tags VARCHAR(2048),
                     audio_file VARCHAR(500) NOT NULL UNIQUE,
                     created_at VARCHAR(25) NOT NULL,
                     author_id INTEGER,
@@ -308,7 +420,7 @@ impl Table for AudioTable {
                 );
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts5_table_name} USING FTS5(
-                    name, tags, content={table_name}, content_rowid=id
+                    name, tags, content={table_name}, content_rowid=id, tokenize='trigram remove_diacritics 1'
                 );
 
                 CREATE TRIGGER IF NOT EXISTS {table_name}_insert AFTER INSERT ON {table_name} BEGIN
@@ -765,5 +877,15 @@ mod tests {
         let settings = table.get_settings().unwrap();
         assert_eq!(settings.join_audio, join_audio);
         assert_eq!(settings.leave_audio, leave_audio);
+    }
+
+    #[test]
+    fn tags_test() {
+        let tags = Tags::from("tag-1, tag_2, tag3, !#$%^&tag4&*(()\ttag5");
+
+        assert_eq!(
+            &vec!["tag-1", "tag_2", "tag3", "tag4", "tag5"],
+            tags.inner()
+        );
     }
 }

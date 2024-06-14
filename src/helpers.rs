@@ -1,6 +1,7 @@
 use std::num::ParseIntError;
 use std::sync::Arc;
 
+use rusqlite::params;
 use serenity::all::{ChannelId, CreateActionRow, CreateButton, GuildId};
 use serenity::async_trait;
 use serenity::{all::Message, client::Context, Result as SerenityResult};
@@ -249,12 +250,12 @@ async fn autocomplete_audio_track_names<'a>(
     log::debug!("Auto complet partial search on {partial}");
     let text = partial.fts_prepare_search();
     let fts5_table_name = db::AudioTable::FTS5_TABLE_NAME;
-    let sql = format!("SELECT name FROM {fts5_table_name} WHERE tags MATCH '{text}' LIMIT {limit}");
+    let sql = format!("SELECT name FROM {fts5_table_name}(?) LIMIT {limit}");
     let mut stmt = connection
         .prepare(sql.as_str())
         .expect("Autocomplete sql invalid");
 
-    let rows = stmt.query_map((), |row| row.get("name"));
+    let rows = stmt.query_map(params![&text], |row| row.get("name"));
 
     match rows {
         Ok(rows) => rows.filter_map(|row| row.ok()).collect(),
@@ -289,4 +290,30 @@ pub fn uuid_v4_str() -> String {
     let uuid = uuid::Uuid::new_v4();
     let mut encode_buf = uuid::Uuid::encode_buffer();
     uuid.hyphenated().encode_lower(&mut encode_buf).to_string()
+}
+
+pub trait TitleCase {
+    fn to_title_case(&self) -> String;
+}
+
+impl TitleCase for &str {
+    fn to_title_case(&self) -> String {
+        self.split_whitespace()
+            .into_iter()
+            .map(|s| {
+                let mut it = s.chars();
+                match it.next() {
+                    Some(c) => c.to_uppercase().to_string() + it.collect::<String>().as_str(),
+                    None => s.to_owned(),
+                }
+            })
+            .collect::<Vec<String>>()
+            .join(" ")
+    }
+}
+
+impl TitleCase for String {
+    fn to_title_case(&self) -> String {
+        self.as_str().to_title_case()
+    }
 }

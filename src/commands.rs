@@ -5,9 +5,9 @@ use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEven
 use crate::{
     audio::{self, AudioFile, RemoveAudioFile},
     common::{LogResult, UserData},
-    db::{self, AudioTable, AudioTableRowInsert, FtsText},
+    db::{self, fts_clean_tags, AudioTable, AudioTableRowInsert, FtsText, Tags},
     helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
-    vars::{self},
+    vars,
 };
 
 pub type GenericError = Box<dyn std::error::Error + Send + Sync>;
@@ -206,11 +206,9 @@ pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
     let mut inserted = 0;
     let table = AudioTable::new(ctx.data().db_connection());
     for audio_file in audio_files {
-        let audio_name = audio_file.audio_title();
-
         let new_audio = AudioTableRowInsert {
-            name: audio_name.clone(),
-            tags: audio_file.file_stem().fts_clean(),
+            name: audio_file.audio_title(),
+            tags: Tags::new(),
             audio_file: audio_file,
             created_at: chrono::Utc::now(),
             author_id: None,
@@ -296,6 +294,11 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
 
             // move track to sounds dir
             let audio_file = ctx.data().move_file_to_audio_dir(&temp_audio_file)?;
+            let tags: Tags = match data.tags {
+                Some(val) => val.fts_clean_tags().into(),
+                None => Tags::new(),
+            };
+
             table
                 .insert_audio_row(AudioTableRowInsert {
                     name: data.name.clone(),
@@ -303,7 +306,7 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
                     author_global_name: ctx.author().global_name.clone(),
                     author_id: Some(ctx.author().id.into()),
                     author_name: Some(ctx.author().name.clone()),
-                    tags: format!("{} {}", data.name, data.tags.unwrap_or("".into())).fts_clean(),
+                    tags: tags,
                     created_at: chrono::Utc::now(),
                 })
                 .log_err()?;
@@ -391,21 +394,11 @@ pub async fn edit_sound(
         .ok_or(format!("Unable to locate audio track '{audio_track_name}'"))
         .log_err()?;
 
-    let name_tags = row.name.fts_clean();
-    let tags = {
-        let tags = row.tags.replace(&name_tags, "");
-        let tags = tags.trim();
-        match tags {
-            "" => None,
-            _ => Some(tags.to_string()),
-        }
-    };
-
     let data = EditSoundModal::execute_with_defaults(
         ctx,
         EditSoundModal {
             name: audio_track_name.clone(),
-            tags: tags,
+            tags: Some(row.tags.to_string()),
         },
     )
     .await?;
@@ -413,8 +406,13 @@ pub async fn edit_sound(
     match data {
         Some(data) => {
             log::debug!("{data:?}");
+            let tags: Tags = match data.tags {
+                Some(val) => Tags::from(val),
+                None => Tags::new(),
+            };
+
             row.name = data.name.clone();
-            row.tags = format!("{} {}", data.name, data.tags.unwrap_or("".into())).fts_clean();
+            row.tags = tags;
 
             table.update_audio_row(&row).log_err()?;
         }
@@ -500,14 +498,31 @@ Bot for playing sounds in voice chat.
   - `/sounds join-audio {{track}}` - Set/Unset sound track to play when bot joins voice channel
   - `/sounds leave-audio {{track}}` - Set/Unset sound track to play when bot leaves voice channel
 ## Prefix Commands
-- `{prefix}:join` - Have bot join the voice channel
-- `{prefix}:leave` - Have bot leave the voice channel
-- `{prefix}:register` - [`dev use`] Register/UnRegister slash commands for guild or globally
-- `{prefix}:scan` - [`dev use`] Scan local audio directory and add sound tracks not in database
+- `{prefix}join` - Have bot join the voice channel
+- `{prefix}leave` - Have bot leave the voice channel
+- `{prefix}register` - [`dev use`] Register/UnRegister slash commands for guild or globally
+- `{prefix}scan` - [`dev use`] Scan local audio directory and add sound tracks not in database
 "
     );
 
     poise_check_msg(ctx.reply(text).await);
+    Ok(())
+}
+
+#[derive(Debug, poise::ChoiceParameter)]
+pub enum Date {
+    #[name = "Recent"]
+    Date,
+    #[name = "Latest"]
+    DateReverse,
+}
+
+pub async fn sounds_search(
+    ctx: PoiseContext<'_>,
+    name: Option<String>,
+    tags: Option<String>,
+    date: Option<Date>,
+) -> PoiseResult {
     Ok(())
 }
 
