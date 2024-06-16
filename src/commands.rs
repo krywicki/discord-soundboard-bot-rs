@@ -5,7 +5,7 @@ use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEven
 use crate::{
     audio::{self, AudioFile, RemoveAudioFile},
     common::{LogResult, UserData},
-    db::{self, fts_clean_tags, AudioTable, AudioTableRowInsert, FtsText, Tags},
+    db::{self, AudioTable, AudioTableRowInsert, Tags},
     helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
     vars,
 };
@@ -295,7 +295,7 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
             // move track to sounds dir
             let audio_file = ctx.data().move_file_to_audio_dir(&temp_audio_file)?;
             let tags: Tags = match data.tags {
-                Some(val) => val.fts_clean_tags().into(),
+                Some(val) => Tags::from(val),
                 None => Tags::new(),
             };
 

@@ -1,17 +1,11 @@
-use std::borrow::Borrow;
-use std::ops::Deref;
+use std::{borrow::Borrow, ops::Deref};
 
-use chrono;
-
-use r2d2_sqlite::rusqlite::OptionalExtension;
-use r2d2_sqlite::rusqlite::{self};
 use regex::Regex;
-use rusqlite::types::FromSql;
-use rusqlite::{params, ToSql};
+use rusqlite::{params, types::FromSql, ToSql};
 
-use crate::audio;
-use crate::commands::PoiseError;
-use crate::common::LogResult;
+use crate::{audio, commands::PoiseError, common::LogResult};
+
+use super::{DbConnection, Table};
 
 pub struct AudioTableRow {
     pub id: i64,
@@ -145,42 +139,6 @@ impl AsRef<AudioTableRowInsert> for AudioTableRowInsert {
     }
 }
 
-pub type Connection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;
-
-pub trait FtsText {
-    fn fts_clean(&self) -> String;
-    fn fts_prepare_search(&self) -> String;
-    fn fts_clean_tags(&self) -> String;
-}
-
-impl FtsText for String {
-    fn fts_clean(&self) -> String {
-        fts_clean_text(&self)
-    }
-
-    fn fts_prepare_search(&self) -> String {
-        fts_prepare_search(fts_clean_text(&self))
-    }
-
-    fn fts_clean_tags(&self) -> String {
-        fts_clean_tags(&self)
-    }
-}
-
-impl<'a> FtsText for &'a str {
-    fn fts_clean(&self) -> String {
-        fts_clean_text(&self)
-    }
-
-    fn fts_prepare_search(&self) -> String {
-        fts_prepare_search(fts_clean_text(&self))
-    }
-
-    fn fts_clean_tags(&self) -> String {
-        fts_clean_tags(&self)
-    }
-}
-
 pub fn fts_clean_tags(text: impl AsRef<str>) -> String {
     let text = text.as_ref();
 
@@ -253,13 +211,8 @@ impl UniqueAudioTableCol {
     }
 }
 
-pub trait Table {
-    fn connection(&self) -> &Connection;
-    fn create_table(&self);
-}
-
 pub struct AudioTable {
-    conn: Connection,
+    conn: DbConnection,
 }
 
 pub struct AudioTableQuery(String);
@@ -285,8 +238,61 @@ impl AudioTable {
     pub const TABLE_NAME: &'static str = "audio";
     pub const FTS5_TABLE_NAME: &'static str = "fts5_audio";
 
-    pub fn new(connection: Connection) -> Self {
+    pub fn new(connection: DbConnection) -> Self {
         Self { conn: connection }
+    }
+
+    /// Return list of audio tracks by name that are most similiar to partial string
+    /// **note**: If few than 3 chars entered, list of latest sounds added are returned
+    pub fn fts_autocomplete_track_names(
+        &self,
+        partial: impl AsRef<str>,
+        limit: Option<usize>,
+    ) -> Vec<String> {
+        let text = partial.as_ref();
+
+        let limit = limit.unwrap_or(5);
+
+        // low char query
+        if text.len() < 3 {
+            log::debug!("low character auto complete: '{text}'");
+            let table_name = Self::TABLE_NAME;
+            let sql =
+                format!("SELECT name FROM {table_name} ORDER BY created_at DESC LIMIT {limit}");
+            let mut stmt = self
+                .conn
+                .prepare(sql.as_str())
+                .expect("Autocomplete low-char sql invalid");
+
+            let rows = stmt.query_map((), |row| row.get("name"));
+            match rows {
+                Ok(rows) => {
+                    let rows: Vec<String> = rows.filter_map(|row| row.ok()).collect();
+                    return rows;
+                }
+                Err(err) => {
+                    log::error!("Autocomplete low-char sql query error - {err}");
+                    return vec![];
+                }
+            }
+        }
+
+        log::debug!("Auto complete partial search on {text}");
+        let fts5_table_name = Self::FTS5_TABLE_NAME;
+        let sql = format!("SELECT name FROM {fts5_table_name}(?) LIMIT {limit}");
+        let mut stmt = self
+            .conn
+            .prepare(sql.as_str())
+            .expect("Autocomplete sql invalid");
+
+        let rows = stmt.query_map(params![&text], |row| row.get("name"));
+        match rows {
+            Ok(rows) => rows.filter_map(|row| row.ok()).collect(),
+            Err(err) => {
+                log::error!("Autocomplete sql query error - {err}");
+                vec![]
+            }
+        }
     }
 
     pub fn find_audio_row(&self, col: impl AsRef<UniqueAudioTableCol>) -> Option<AudioTableRow> {
@@ -395,7 +401,7 @@ impl AudioTable {
 }
 
 impl Table for AudioTable {
-    fn connection(&self) -> &Connection {
+    fn connection(&self) -> &DbConnection {
         &self.conn
     }
 
@@ -452,131 +458,6 @@ impl Table for AudioTable {
     }
 }
 
-pub struct SettingsTableRow {
-    pub id: i64,
-    pub join_audio: Option<String>,
-    pub leave_audio: Option<String>,
-}
-
-impl TryFrom<&rusqlite::Row<'_>> for SettingsTableRow {
-    type Error = rusqlite::Error;
-
-    fn try_from(row: &rusqlite::Row<'_>) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: row.get("id")?,
-            join_audio: row.get("join_audio")?,
-            leave_audio: row.get("leave_audio")?,
-        })
-    }
-}
-pub struct SettingsTable {
-    conn: Connection,
-}
-
-impl SettingsTable {
-    const TABLE_NAME: &'static str = "settings";
-
-    pub fn new(connection: Connection) -> Self {
-        Self { conn: connection }
-    }
-
-    fn first_row(&self) -> Result<Option<SettingsTableRow>, PoiseError> {
-        let table_name = Self::TABLE_NAME;
-        let sql = format!("SELECT * FROM {table_name} LIMIT 1");
-        Ok(self
-            .conn
-            .query_row(sql.as_str(), (), |row| SettingsTableRow::try_from(row))
-            .optional()
-            .log_err_msg(format!("Failed to get first row of {table_name}"))?)
-    }
-
-    fn init_settings(&self) -> Result<SettingsTableRow, PoiseError> {
-        let table_name = Self::TABLE_NAME;
-
-        let sql = format!(
-            "
-            INSERT INTO {table_name}
-                (join_audio, leave_audio)
-            VALUES
-                (?1, ?2)
-            "
-        );
-
-        let none: Option<String> = None;
-        self.conn
-            .execute(sql.as_str(), (&none, &none))
-            .log_err_msg(format!("Failed init settings row in table: {table_name}"))?;
-
-        Ok(self
-            .first_row()
-            .log_err()?
-            .ok_or("Failed to insert initial settings row")?)
-    }
-
-    pub fn get_settings(&self) -> Result<SettingsTableRow, PoiseError> {
-        match self.first_row()? {
-            Some(settings) => Ok(settings),
-            None => self.init_settings(),
-        }
-    }
-
-    pub fn update_settings(&self, settings: &SettingsTableRow) -> Result<(), PoiseError> {
-        log::info!("Saving settings");
-
-        let table_name = Self::TABLE_NAME;
-        let row_id = settings.id;
-        let join_audio = settings
-            .join_audio
-            .as_ref()
-            .map_or("NULL".into(), |val| format!("'{val}'"));
-        let leave_audio = settings
-            .leave_audio
-            .as_ref()
-            .map_or("NULL".into(), |val| format!("'{val}'"));
-
-        let sql = format!(
-            "
-            UPDATE {table_name}
-            SET
-                join_audio = {join_audio},
-                leave_audio = {leave_audio}
-            WHERE
-                id = {row_id};
-            "
-        );
-
-        self.conn.execute(sql.as_str(), ()).log_err()?;
-
-        Ok(())
-    }
-}
-
-impl Table for SettingsTable {
-    fn connection(&self) -> &Connection {
-        &self.conn
-    }
-
-    fn create_table(&self) {
-        let table_name = Self::TABLE_NAME;
-        log::info!("Creating table: {table_name}");
-        let sql = format!(
-            "
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                id INTEGER PRIMARY KEY,
-                join_audio VARCHAR(80),
-                leave_audio VARCHAR(80)
-            );
-        "
-        );
-
-        self.conn
-            .execute_batch(sql.as_str())
-            .log_err_msg("Failed create table")
-            .log_ok_msg(format!("Created table {table_name}"))
-            .unwrap();
-    }
-}
-
 #[allow(unused)]
 #[derive(Debug)]
 pub enum AudioTableOrderBy {
@@ -591,114 +472,6 @@ impl AudioTableOrderBy {
             Self::CreatedAt => "created_at".into(),
             Self::Id => "id".into(),
             Self::Name => "name".into(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct AudioTablePaginator {
-    conn: Connection,
-    order_by: AudioTableOrderBy,
-    page_limit: u64,
-    offset: u64,
-}
-
-impl AudioTablePaginator {
-    pub fn builder(conn: Connection) -> AudioTablePaginatorBuilder {
-        AudioTablePaginatorBuilder::new(conn)
-    }
-
-    pub fn next_page(&mut self) -> Result<Vec<AudioTableRow>, String> {
-        let conn = &self.conn;
-        let table_name = AudioTable::TABLE_NAME;
-        let order_by = self.order_by.col_name();
-        let page_limit = self.page_limit;
-        let offset = self.offset;
-
-        let sql = format!(
-            "SELECT * FROM {table_name}
-            ORDER BY {order_by}
-            LIMIT {page_limit}
-            OFFSET {offset};"
-        );
-
-        let mut stmt = conn
-            .prepare(sql.as_ref())
-            .expect("Failed to prepare sql stmt");
-
-        let row_iter = stmt
-            .query_map([], |row| AudioTableRow::try_from(row))
-            .map_err(|err| format!("Error in AudioTablePaginator - {err}"))?;
-
-        self.offset += self.page_limit;
-
-        Ok(row_iter
-            .filter_map(|row| match row {
-                Ok(val) => Some(val),
-                Err(err) => {
-                    log::error!("{err}");
-                    None
-                }
-            })
-            .collect())
-    }
-}
-
-pub struct AudioTablePaginatorBuilder {
-    conn: Connection,
-    order_by: AudioTableOrderBy,
-    page_limit: u64,
-}
-
-impl AudioTablePaginatorBuilder {
-    pub fn new(conn: Connection) -> Self {
-        Self {
-            conn: conn,
-            order_by: AudioTableOrderBy::Id,
-            page_limit: 500,
-        }
-    }
-
-    #[allow(unused)]
-    pub fn order_by(mut self, value: AudioTableOrderBy) -> Self {
-        self.order_by = value;
-        self
-    }
-
-    pub fn page_limit(mut self, value: u64) -> Self {
-        self.page_limit = value;
-        self
-    }
-
-    pub fn build(self) -> AudioTablePaginator {
-        AudioTablePaginator {
-            conn: self.conn,
-            order_by: self.order_by,
-            page_limit: self.page_limit,
-            offset: 0,
-        }
-    }
-}
-
-impl Iterator for AudioTablePaginator {
-    type Item = Result<Vec<AudioTableRow>, String>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let rows = self.next_page();
-
-        match rows {
-            Ok(ref _rows) => {
-                if _rows.is_empty() {
-                    return None;
-                } else {
-                    return Some(rows);
-                }
-            }
-
-            Err(err) => {
-                log::error!("AudiotablePaginator error - {err}");
-                return None;
-            }
         }
     }
 }
@@ -731,7 +504,7 @@ mod tests {
         );
     }
 
-    fn get_db_connection() -> Connection {
+    fn get_db_connection() -> DbConnection {
         let db_manager = SqliteConnectionManager::memory();
         let db_pool = r2d2::Pool::new(db_manager).unwrap();
         db_pool.get().unwrap()
@@ -812,71 +585,41 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_pagination_test() {
-        let db_manager = SqliteConnectionManager::memory();
-        let db_pool = r2d2::Pool::new(db_manager).unwrap();
-        let table = AudioTable::new(db_pool.get().unwrap());
+    fn audio_table_autocomplete_track_names_test() {
+        let table = get_audio_table();
         table.create_table();
 
-        for _ in 0..3 {
-            table
-                .insert_audio_row(make_audio_table_row_insert())
-                .unwrap();
-        }
+        let mut row_insert = make_audio_table_row_insert();
+        row_insert.name = "Beep Boop".into();
+        row_insert.tags = Tags::from("r2d2 star wars droid");
+        table.insert_audio_row(row_insert).unwrap();
 
-        let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
-            .page_limit(2)
-            .build();
+        let mut row_insert = make_audio_table_row_insert();
+        row_insert.name = "Beep Bop".into();
+        row_insert.tags = Tags::from("gonk star wars droid");
+        table.insert_audio_row(row_insert).unwrap();
 
-        let page = paginator.next().unwrap().unwrap();
-        assert_eq!(page.len(), 2);
+        let mut row_insert = make_audio_table_row_insert();
+        row_insert.name = "Beez's Biz".into();
+        row_insert.tags = Tags::from("random sound-effect");
+        table.insert_audio_row(row_insert).unwrap();
 
-        let page = paginator.next().unwrap().unwrap();
-        assert_eq!(page.len(), 1);
+        let results = table.fts_autocomplete_track_names("bee", None);
+        assert_eq!(3, results.len());
 
-        let page = paginator.next();
-        assert!(page.is_none());
-    }
+        let results = table.fts_autocomplete_track_names("bee", Some(2));
+        assert_eq!(2, results.len());
 
-    fn get_settings_table() -> SettingsTable {
-        let connection = get_db_connection();
-        SettingsTable::new(connection)
-    }
+        let results = table.fts_autocomplete_track_names("r2d2", None);
+        assert_eq!("Beep Boop", results[0]);
 
-    #[test]
-    fn settings_table_create_test() {
-        let table = get_settings_table();
-        table.create_table();
-        table.create_table();
-    }
+        let results = table.fts_autocomplete_track_names("droid", None);
+        assert_eq!(2, results.len());
+        assert_eq!("Beep Boop", results[0]);
+        assert_eq!("Beep Bop", results[1]);
 
-    #[test]
-    fn get_settings_test() {
-        let table = get_settings_table();
-        table.create_table();
-        let settings = table.get_settings().unwrap();
-
-        assert!(settings.join_audio.is_none());
-        assert!(settings.leave_audio.is_none());
-    }
-
-    #[test]
-    fn update_settings_test() {
-        let table = get_settings_table();
-        table.create_table();
-        let mut settings = table.get_settings().unwrap();
-
-        let join_audio = Some("join.mp3".into());
-        let leave_audio = Some("leave.mp3".into());
-
-        settings.join_audio = join_audio.clone();
-        settings.leave_audio = leave_audio.clone();
-
-        table.update_settings(&settings).unwrap();
-
-        let settings = table.get_settings().unwrap();
-        assert_eq!(settings.join_audio, join_audio);
-        assert_eq!(settings.leave_audio, leave_audio);
+        let results = table.fts_autocomplete_track_names("RaN", None);
+        assert_eq!("Beez's Biz", results[0]);
     }
 
     #[test]

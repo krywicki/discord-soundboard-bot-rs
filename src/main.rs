@@ -1,4 +1,6 @@
 #![allow(warnings)]
+use std::sync::Arc;
+
 use commands::PoiseResult;
 use common::LogResult;
 use db::{AudioTable, SettingsTable, Table};
@@ -7,8 +9,8 @@ use log;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Client as HttpClient;
 use serenity::all::{
-    ApplicationId, ComponentInteraction, ComponentInteractionDataKind, CreateInteractionResponse,
-    FullEvent, Interaction,
+    ApplicationId, CacheHttp, ChannelId, ComponentInteraction, ComponentInteractionDataKind,
+    CreateInteractionResponse, FullEvent, GuildChannel, GuildId, Interaction, VoiceState,
 };
 use serenity::client::Context;
 
@@ -85,7 +87,10 @@ async fn main() -> anyhow::Result<()> {
             .build();
 
     // client setup
-    let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::non_privileged()
+        | GatewayIntents::MESSAGE_CONTENT
+        | GatewayIntents::GUILD_VOICE_STATES
+        | GatewayIntents::GUILDS;
 
     log::info!("Creating client...");
     let mut client = Client::builder(&token, intents)
@@ -130,6 +135,9 @@ async fn event_handler(
         FullEvent::InteractionCreate { interaction } => {
             handle_interaction_create(ctx, interaction, framework, data).await?;
         }
+        FullEvent::VoiceStateUpdate { old, new } => {
+            handle_voice_state_update(ctx, old, new, framework, data).await?
+        }
         _ => {}
     }
 
@@ -160,6 +168,40 @@ async fn handle_ready(
     AudioTable::new(data.db_connection()).create_table();
     SettingsTable::new(data.db_connection()).create_table();
 
+    Ok(())
+}
+
+async fn handle_voice_state_update(
+    ctx: &Context,
+    old: &Option<VoiceState>,
+    new: &VoiceState,
+    framework: FrameworkContext<'_>,
+    data: &UserData,
+) -> PoiseResult {
+    // if member left voice channel
+    if new.channel_id.is_none() {
+        match old {
+            Some(old) => match old.channel_id {
+                Some(channel_id) => {
+                    let (guild_id, members) = {
+                        let guild_channel = ctx.cache.channel(&channel_id).unwrap();
+                        let guild_id = guild_channel.guild_id;
+                        let members = guild_channel.members(&ctx.cache)?;
+                        (guild_id, members)
+                    };
+
+                    // if bot only member in voice channel
+                    if members.len() == 1 && members[0].user.id == ctx.cache.current_user().id {
+                        log::info!("No one in voice channel. Bot is leaving. guild_id: {guild_id}, channel_id: {channel_id}");
+                        let manager = helpers::songbird_get(&ctx).await;
+                        manager.leave_voice_channel(guild_id).await?;
+                    }
+                }
+                None => {}
+            },
+            None => {}
+        }
+    }
     Ok(())
 }
 
