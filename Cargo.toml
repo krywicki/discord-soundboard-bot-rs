@@ -20,6 +20,7 @@ r2d2 = "0.8.10"
 r2d2_sqlite = "0.24.0"
 rusqlite = { version = "0.31.0", features = [
     "chrono",
+    "bundled",
 ] } # identical to r2d2_sqlite rusqlite version, to enable chrono feature
 chrono = "0.4.38"
 poise = "0.6.1"
@@ -29,6 +30,3 @@ serde = { version = "1.0.203", features = ["derive"] }
 regex = "1.10.4"
 futures = "0.3.30"
 uuid = "1.8.0"
-
-[features]
-bundled-sqlite3 = ["rusqlite/bundled"]
