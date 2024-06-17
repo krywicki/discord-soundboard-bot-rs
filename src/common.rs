@@ -3,7 +3,7 @@ use std::path;
 use crate::audio::{AudioDir, AudioFile};
 use crate::commands::PoiseError;
 use crate::config::Config;
-use crate::db::{AudioTable, Connection, SettingsTable};
+use crate::db::{AudioTable, DbConnection, SettingsTable};
 
 pub struct UserData {
     pub config: Config,
@@ -15,7 +15,7 @@ impl UserData {
         read_audio_dir(&self.config.audio_dir)
     }
 
-    pub fn db_connection(&self) -> Connection {
+    pub fn db_connection(&self) -> DbConnection {
         self.db_pool
             .get()
             .expect("Failed to get Pooled SQLite connection")

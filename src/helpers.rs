@@ -7,13 +7,13 @@ use serenity::{all::Message, client::Context, Result as SerenityResult};
 use songbird::tracks::TrackHandle;
 use songbird::{Songbird, SongbirdKey};
 
+use crate::audio;
 use crate::audio::TrackHandleHelper;
-use crate::commands::{PoiseContext, PoiseError};
+use crate::commands::{PoiseContext, PoiseError, PoiseResult};
 use crate::common::LogResult;
-use crate::db::{AudioTable, AudioTableRow, FtsText};
+use crate::db::AudioTableRow;
 use crate::errors::AudioError;
 use crate::vars;
-use crate::{audio, db};
 
 pub async fn songbird_get(ctx: &Context) -> Arc<songbird::Songbird> {
     songbird::get(ctx)
@@ -138,10 +138,27 @@ pub trait SongbirdHelper {
         channel_id: ChannelId,
         audio_track: &audio::AudioFile,
     ) -> Result<TrackHandle, AudioError>;
+
+    async fn leave_voice_channel(&self, guild_id: GuildId) -> PoiseResult;
 }
 
 #[async_trait]
 impl SongbirdHelper for Songbird {
+    async fn leave_voice_channel(&self, guild_id: GuildId) -> PoiseResult {
+        log::info!("Songbird leaving voice channel for guild_id: {guild_id}");
+
+        match self.get(guild_id) {
+            Some(_handler) => {
+                self.leave(guild_id).await.log_err()?;
+            }
+            None => {
+                log::error!("Songbird manager does not have a handler for guild_id: {guild_id}")
+            }
+        }
+
+        Ok(())
+    }
+
     async fn play_audio(
         &self,
         guild_id: GuildId,
@@ -216,72 +233,24 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
     CreateActionRow::Buttons(buttons)
 }
 
-async fn autocomplete_audio_track_names<'a>(
-    ctx: PoiseContext<'_>,
-    partial: &'a str,
-    limit: Option<usize>,
-) -> Vec<String> {
-    let connection = ctx.data().db_connection();
-    let limit = limit.unwrap_or(5);
-
-    // low char query
-    if partial.len() < 3 {
-        log::debug!("low character auto complete: '{partial}'");
-        let table_name = AudioTable::TABLE_NAME;
-        let sql = format!("SELECT name FROM {table_name} ORDER BY created_at DESC LIMIT {limit}");
-        let mut stmt = connection
-            .prepare(sql.as_str())
-            .expect("Autocomplete low-char sql invalid");
-
-        let rows = stmt.query_map((), |row| row.get("name"));
-        match rows {
-            Ok(rows) => {
-                let rows: Vec<String> = rows.filter_map(|row| row.ok()).collect();
-                return rows;
-            }
-            Err(err) => {
-                log::error!("Autocomplete low-char sql query error - {err}");
-                return vec![];
-            }
-        }
-    }
-
-    log::debug!("Auto complet partial search on {partial}");
-    let text = partial.fts_prepare_search();
-    let fts5_table_name = db::AudioTable::FTS5_TABLE_NAME;
-    let sql = format!("SELECT name FROM {fts5_table_name} WHERE tags MATCH '{text}' LIMIT {limit}");
-    let mut stmt = connection
-        .prepare(sql.as_str())
-        .expect("Autocomplete sql invalid");
-
-    let rows = stmt.query_map((), |row| row.get("name"));
-
-    match rows {
-        Ok(rows) => rows.filter_map(|row| row.ok()).collect(),
-        Err(err) => {
-            log::error!("Autocomplete sql query error - {err}");
-            vec![]
-        }
-    }
-}
-
 pub async fn autocomplete_audio_track_name<'a>(
     ctx: PoiseContext<'_>,
     partial: &'a str,
 ) -> impl futures::stream::Stream<Item = String> + 'a {
-    let audio_tracks = autocomplete_audio_track_names(ctx, partial, Some(5)).await;
-    futures::stream::iter(audio_tracks)
+    let table = ctx.data().audio_table();
+    let track_names = table.fts_autocomplete_track_names(partial, Some(5));
+    futures::stream::iter(track_names)
 }
 
 pub async fn autocomplete_opt_audio_track_name<'a>(
     ctx: PoiseContext<'_>,
     partial: &'a str,
 ) -> impl futures::stream::Stream<Item = String> + 'a {
-    let mut audio_tracks = autocomplete_audio_track_names(ctx, partial, Some(5)).await;
-    let mut _audio_tracks = vec!["NONE".to_string()];
+    let table = ctx.data().audio_table();
+    let mut track_names = table.fts_autocomplete_track_names(partial, Some(5));
+    track_names.insert(0, "NONE".into());
 
-    _audio_tracks.append(&mut audio_tracks);
-    futures::stream::iter(_audio_tracks)
+    futures::stream::iter(track_names)
 }
 
 pub fn uuid_v4_str() -> String {
@@ -289,4 +258,31 @@ pub fn uuid_v4_str() -> String {
     let uuid = uuid::Uuid::new_v4();
     let mut encode_buf = uuid::Uuid::encode_buffer();
     uuid.hyphenated().encode_lower(&mut encode_buf).to_string()
+}
+
+pub fn title_case(s: impl AsRef<str>) -> String {
+    s.as_ref()
+        .split_whitespace()
+        .into_iter()
+        .map(|s| {
+            let mut it = s.chars();
+            match it.next() {
+                Some(c) => c.to_uppercase().to_string() + it.collect::<String>().as_str(),
+                None => s.to_owned(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn title_case_test() {
+        assert_eq!("This Is A Title", title_case("this is a title"));
+        assert_eq!("This Is_a-title", title_case("this is_a-title"));
+        assert_eq!("This Is A Title", title_case("this is\ta\t\ttitle"));
+    }
 }
