@@ -7,7 +7,7 @@ The `discord-soundboard-bot` allows users in a voice channel to play an unlimite
 
 <center>
   <table style="padding:0px; margin:0px; table-layout:fixed">
-    <tr>
+    <tr valign="center">
       <td>
         <h5 style="text-align:center">Voice Channel</h5>
         <img src="./docs/imgs/voice-channel.png"></td>
@@ -16,14 +16,13 @@ The `discord-soundboard-bot` allows users in a voice channel to play an unlimite
           <tr>
             <td>
               <h5><code>/play {track}</code></h5>
-              <img src="./docs/imgs/play-track.png" height="auto"
-              max-width=550px>
+              <img src="./docs/imgs/play-track.png" style="height:auto;max-width:550px">
             </td>
           </tr>
           <tr>
             <td>
               <h5><code>/sounds display</code></h5>
-              <img src="./docs/imgs/sounds-display.png" height="auto" max-width=550px>
+              <img src="./docs/imgs/sounds-display.png" style="height:auto; max-width:550px">
             </td>
           </tr>
         </table>
