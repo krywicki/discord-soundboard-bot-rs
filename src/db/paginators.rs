@@ -123,16 +123,6 @@ mod tests {
 
     use super::*;
 
-    fn get_db_connection() -> DbConnection {
-        let db_manager = SqliteConnectionManager::memory();
-        let db_pool = r2d2::Pool::new(db_manager).unwrap();
-        db_pool.get().unwrap()
-    }
-
-    fn get_audio_table() -> AudioTable {
-        AudioTable::new(get_db_connection())
-    }
-
     fn make_audio_table_row_insert() -> AudioTableRowInsert {
         AudioTableRowInsert {
             audio_file: AudioFile::new(

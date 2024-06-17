@@ -1,6 +1,4 @@
-#![allow(warnings)]
-use std::sync::Arc;
-
+//#![allow(warnings)]
 use commands::PoiseResult;
 use common::LogResult;
 use db::{AudioTable, SettingsTable, Table};
@@ -9,8 +7,8 @@ use log;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Client as HttpClient;
 use serenity::all::{
-    ApplicationId, CacheHttp, ChannelId, ComponentInteraction, ComponentInteractionDataKind,
-    CreateInteractionResponse, FullEvent, GuildChannel, GuildId, Interaction, VoiceState,
+    ApplicationId, ComponentInteraction, ComponentInteractionDataKind, CreateInteractionResponse,
+    FullEvent, Interaction, VoiceState,
 };
 use serenity::client::Context;
 
@@ -175,8 +173,8 @@ async fn handle_voice_state_update(
     ctx: &Context,
     old: &Option<VoiceState>,
     new: &VoiceState,
-    framework: FrameworkContext<'_>,
-    data: &UserData,
+    _framework: FrameworkContext<'_>,
+    _data: &UserData,
 ) -> PoiseResult {
     // if member left voice channel
     if new.channel_id.is_none() {

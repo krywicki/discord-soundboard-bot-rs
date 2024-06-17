@@ -19,7 +19,7 @@ use symphonia::core::probe::Hint;
 
 use crate::commands::PoiseError;
 use crate::common::LogResult;
-use crate::helpers::{self, TitleCase};
+use crate::helpers::{self};
 
 pub async fn wait_for_audio_track_end(track_handle: &TrackHandle) {
     loop {
@@ -187,8 +187,7 @@ impl AudioFile {
     pub fn audio_title(&self) -> String {
         let stem = self.file_stem();
         let stem = stem.replace("_", " ").replace("-", " ");
-
-        stem.to_title_case()
+        helpers::title_case(stem)
     }
 }
 

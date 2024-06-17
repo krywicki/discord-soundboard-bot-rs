@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, ops::Deref};
+use std::ops::Deref;
 
 use regex::Regex;
 use rusqlite::{params, types::FromSql, ToSql};
@@ -34,6 +34,7 @@ impl Tags {
         text.into()
     }
 
+    #[allow(dead_code)]
     pub fn inner(&self) -> &Vec<String> {
         &self.0
     }
@@ -139,44 +140,6 @@ impl AsRef<AudioTableRowInsert> for AudioTableRowInsert {
     }
 }
 
-pub fn fts_clean_tags(text: impl AsRef<str>) -> String {
-    let text = text.as_ref();
-
-    let re = Regex::new(r"[^a-zA-Z0-9 ]").unwrap();
-    let text = re.replace_all(text, " ");
-    let text = text.trim();
-
-    text.into()
-}
-
-pub fn fts_clean_text(text: impl AsRef<str>) -> String {
-    let text = text.as_ref();
-
-    // Convert words like It's -> Its
-    let text = text.replace("'", "");
-
-    // Replace all non alphanumeric & space chars with space char
-    let re = Regex::new(r"[^a-zA-Z0-9 ]").unwrap();
-    let text = re.replace_all(text.as_str(), " ");
-
-    // Remove replace 2x or more space chars to single space char
-    let re = Regex::new(r"\s{2,}").unwrap();
-    let text = re.replace_all(text.borrow(), " ");
-
-    let text = text.to_lowercase();
-
-    text.trim().into()
-}
-
-pub fn fts_prepare_search(text: impl AsRef<str>) -> String {
-    let s = text.as_ref();
-
-    s.split_whitespace()
-        .map(|word| format!("{word}*"))
-        .reduce(|cur, nxt| format!("{cur} {nxt}"))
-        .unwrap_or("".into())
-}
-
 #[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum UniqueAudioTableCol {
@@ -213,25 +176,6 @@ impl UniqueAudioTableCol {
 
 pub struct AudioTable {
     conn: DbConnection,
-}
-
-pub struct AudioTableQuery(String);
-
-pub enum Order {
-    Ascending,
-    Descending,
-}
-
-pub enum OrderBy {
-    Name(Order),
-    Date(Order),
-}
-
-pub struct AudioTableQueryBuilder {
-    id: Option<i64>,
-    name: Option<String>,
-    tags: Option<String>,
-    order_by: Option<OrderBy>,
 }
 
 impl AudioTable {
@@ -484,26 +428,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn fts_clean_text_test() {
-        assert_eq!("i love star wars", fts_clean_text("I love star-wars!  "));
-
-        assert_eq!(
-            "i think its borked",
-            fts_clean_text("I think it's borked!?!?!?!?")
-        );
-
-        assert_eq!(
-            "i like code",
-            fts_clean_text(r"I like !@#$%^&*(_){}[]/\., code")
-        );
-
-        assert_eq!(
-            "this is a single line",
-            fts_clean_text("This\nis\na\nsingle\nline\n")
-        );
-    }
-
     fn get_db_connection() -> DbConnection {
         let db_manager = SqliteConnectionManager::memory();
         let db_pool = r2d2::Pool::new(db_manager).unwrap();
@@ -529,14 +453,14 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_create_test() {
+    fn table_create_test() {
         let table = get_audio_table();
         table.create_table(); // create table(s) & trigger(s)
         table.create_table(); // ignore table(s) & triggers(s) already created
     }
 
     #[test]
-    fn audio_table_insert_row_test() {
+    fn table_insert_row_test() {
         let table = get_audio_table();
 
         table.create_table();
@@ -546,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_find_row_test() {
+    fn table_find_row_test() {
         let table = get_audio_table();
         table.create_table();
 
@@ -559,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_update_row_test() {
+    fn table_update_row_test() {
         let table = get_audio_table();
         table.create_table();
 
@@ -585,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_table_autocomplete_track_names_test() {
+    fn table_autocomplete_track_names_test() {
         let table = get_audio_table();
         table.create_table();
 

@@ -517,15 +517,6 @@ pub enum Date {
     DateReverse,
 }
 
-pub async fn sounds_search(
-    ctx: PoiseContext<'_>,
-    name: Option<String>,
-    tags: Option<String>,
-    date: Option<Date>,
-) -> PoiseResult {
-    Ok(())
-}
-
 struct TrackErrorNotifier;
 
 #[async_trait]

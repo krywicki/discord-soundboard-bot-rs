@@ -1,7 +1,6 @@
 use std::num::ParseIntError;
 use std::sync::Arc;
 
-use rusqlite::params;
 use serenity::all::{ChannelId, CreateActionRow, CreateButton, GuildId};
 use serenity::async_trait;
 use serenity::{all::Message, client::Context, Result as SerenityResult};
@@ -12,9 +11,9 @@ use crate::audio;
 use crate::audio::TrackHandleHelper;
 use crate::commands::{PoiseContext, PoiseError, PoiseResult};
 use crate::common::LogResult;
-use crate::db::{AudioTable, AudioTableRow};
+use crate::db::AudioTableRow;
 use crate::errors::AudioError;
-use crate::{db, vars};
+use crate::vars;
 
 pub async fn songbird_get(ctx: &Context) -> Arc<songbird::Songbird> {
     songbird::get(ctx)
@@ -149,7 +148,7 @@ impl SongbirdHelper for Songbird {
         log::info!("Songbird leaving voice channel for guild_id: {guild_id}");
 
         match self.get(guild_id) {
-            Some(handler) => {
+            Some(_handler) => {
                 self.leave(guild_id).await.log_err()?;
             }
             None => {
@@ -261,28 +260,29 @@ pub fn uuid_v4_str() -> String {
     uuid.hyphenated().encode_lower(&mut encode_buf).to_string()
 }
 
-pub trait TitleCase {
-    fn to_title_case(&self) -> String;
+pub fn title_case(s: impl AsRef<str>) -> String {
+    s.as_ref()
+        .split_whitespace()
+        .into_iter()
+        .map(|s| {
+            let mut it = s.chars();
+            match it.next() {
+                Some(c) => c.to_uppercase().to_string() + it.collect::<String>().as_str(),
+                None => s.to_owned(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
 }
 
-impl TitleCase for &str {
-    fn to_title_case(&self) -> String {
-        self.split_whitespace()
-            .into_iter()
-            .map(|s| {
-                let mut it = s.chars();
-                match it.next() {
-                    Some(c) => c.to_uppercase().to_string() + it.collect::<String>().as_str(),
-                    None => s.to_owned(),
-                }
-            })
-            .collect::<Vec<String>>()
-            .join(" ")
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl TitleCase for String {
-    fn to_title_case(&self) -> String {
-        self.as_str().to_title_case()
+    #[test]
+    fn title_case_test() {
+        assert_eq!("This Is A Title", title_case("this is a title"));
+        assert_eq!("This Is_a-title", title_case("this is_a-title"));
+        assert_eq!("This Is A Title", title_case("this is\ta\t\ttitle"));
     }
 }

@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_table_create_test() {
+    fn table_create_test() {
         let table = get_settings_table();
         table.create_table();
         table.create_table();
