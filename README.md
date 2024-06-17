@@ -5,31 +5,31 @@ A simple, unlimited audio track soundboard for discord, proxied via bot in voice
 
 The `discord-soundboard-bot` allows users in a voice channel to play an unlimited length, unlimited number of audio tracks.
 
-<center>
-  <table border="0">
-    <tr valign="center">
-      <td>
-        <h5 style="text-align:center">Voice Channel</h5>
-        <img src="./docs/imgs/voice-channel.png"></td>
-      <td >
-        <table border="0">
-          <tr>
-            <td>
-              <h5><code>/play {track}</code></h5>
-              <img src="./docs/imgs/play-track.png" height="auto" width="550px">
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <h5><code>/sounds display</code></h5>
-              <img src="./docs/imgs/sounds-display.png" height="auto" width="550px">
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</center>
+
+<table border="0">
+  <tr valign="center" border="0">
+    <td border="0">
+      <h5 style="text-align:center">Voice Channel</h5>
+      <img src="./docs/imgs/voice-channel.png"></td>
+    <td border="0">
+      <table border="0">
+        <tr border="0">
+          <td border="0">
+            <h5><code>/play {track}</code></h5>
+            <img src="./docs/imgs/play-track.png" height="auto" width="550px">
+          </td>
+        </tr>
+        <tr border="0">
+          <td border="0">
+            <h5><code>/sounds display</code></h5>
+            <img src="./docs/imgs/sounds-display.png" height="auto" width="550px">
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
 
 
 The simple steps to using the soundboard-bot are as follows...
@@ -42,15 +42,13 @@ The simple steps to using the soundboard-bot are as follows...
 
 -  Use the sound buttons in a text channel `/sounds display`
 
-**Note** The soundboard-bot commands are typed in any text channel on the server.
-
-
-
 ## Dependencies
 - [Songbird Dependencies](https://github.com/serenity-rs/songbird/tree/current#dependencies)
 - [A Registered Discord Bot](https://discord.com/developers/docs/quick-start/getting-started)
 
 ## Slash Commands
+These commands can be typed in any text channel on the server.
+
 - `/play {track}` - Play sound track in voice channel
 - `/sounds`
   - `/sounds add` - Opens form to add sounds
@@ -61,6 +59,8 @@ The simple steps to using the soundboard-bot are as follows...
   - `/sounds leave-audio {track}` - Set/Unset sound track to play when bot leaves voice channel
 
 ## Prefix Commands
+These commands can be typed in any text channel on the server.
+
 - `{prefix}:join` - Have bot join the voice channel
 - `{prefix}:leave` - Have bot leave the voice channel
 - `{prefix}:register` - Register/UnRegister slash commands for guild or globally
