@@ -66,10 +66,6 @@ These commands can be typed in any text channel on the server.
 - `{prefix}:register` - Register/UnRegister slash commands for guild or globally
 - `{prefix}:scan` - Scan local audio directory and add sound tracks not in database
 
-## RasperryPI Setup
-
-It is suggested to build with the `sqlite3-bundled` feature to avoid dependency and extension headaches.
-
 ```bash
 cargo build --release -F sqlite3-bundled
 ```
