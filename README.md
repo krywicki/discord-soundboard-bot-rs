@@ -5,15 +5,45 @@ A simple, unlimited audio track soundboard for discord, proxied via bot in voice
 
 The `discord-soundboard-bot` allows users in a voice channel to play an unlimited length, unlimited number of audio tracks.
 
+<center>
+  <table style="padding:0px; margin:0px">
+    <tr valign="top" style="padding:0px">
+      <td>
+        <h5 style="text-align:center">Voice Channel</h5>
+        <img src="./docs/imgs/voice-channel.png"></td>
+      <td >
+        <table style="padding:0px; margin:0px">
+          <tr valign="top">
+            <h5><center><code>/play {track}</center></h5>
+            <td><img src="./docs/imgs/play-track.png"></td>
+          </tr>
+          <tr>
+            <td>
+              <h5><center><code>/sounds display</code></center></h5>
+              <img src="./docs/imgs/sounds-display.png">
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    </tr>
+  </table>
+</center>
+
+
 The simple steps to using the soundboard-bot are as follows...
 
 - User joins a voice channel
 - Command the soundboard-bot to join the voice channel with the `sb:join` command
 - Play desired sound using the `/play {track name}`
 
+**OR**
+
+-  Use the sound buttons in a text channel `/sounds display`
+
 **Note** The soundboard-bot commands are typed in any text channel on the server.
 
-- Refer to
+
 
 ## Dependencies
 - [Songbird Dependencies](https://github.com/serenity-rs/songbird/tree/current#dependencies)
@@ -32,17 +62,16 @@ The simple steps to using the soundboard-bot are as follows...
 ## Prefix Commands
 - `{prefix}:join` - Have bot join the voice channel
 - `{prefix}:leave` - Have bot leave the voice channel
-- `{prefix}:register` - [`dev use`] Register/UnRegister slash commands for guild or globally
-- `{prefix}:scan` - [`dev use`] Scan local audio directory and add sound tracks not in database
+- `{prefix}:register` - Register/UnRegister slash commands for guild or globally
+- `{prefix}:scan` - Scan local audio directory and add sound tracks not in database
 
 ## RasperryPI Setup
 
-Ensure SQLite3 library is installed.
-```bash
-sudo apt install libdbd-sqlite3
-```
+It is suggested to build with the `sqlite3-bundled` feature to avoid dependency and extension headaches.
 
-The perform the ordinary `cargo build --release`.
+```bash
+cargo build --release -F sqlite3-bundled
+```
 
 ## Environment variables
 - `DISCORD_BOT_TOKEN` - The discord token. Available on the discord developer portal website.
