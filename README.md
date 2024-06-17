@@ -6,13 +6,13 @@ A simple, unlimited audio track soundboard for discord, proxied via bot in voice
 The `discord-soundboard-bot` allows users in a voice channel to play an unlimited length, unlimited number of audio tracks.
 
 <center>
-  <table style="padding:0px; margin:0px; table-layout:fixed">
+  <table border="0">
     <tr valign="center">
       <td>
         <h5 style="text-align:center">Voice Channel</h5>
         <img src="./docs/imgs/voice-channel.png"></td>
       <td >
-        <table style="padding:0px; margin:0px">
+        <table border="0">
           <tr>
             <td>
               <h5><code>/play {track}</code></h5>
