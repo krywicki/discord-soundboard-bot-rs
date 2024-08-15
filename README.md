@@ -55,6 +55,7 @@ These commands can be typed in any text channel on the server.
   - `/sounds remove {track}` - Removes sound
   - `/sounds edit {track}` - Opens form to edit sound track
   - `/sounds display` - Displays a button grid of sounds that can be played in voice channel
+    - `/sounds display {search}` - Displays a button grid of sounds filtered by tags or names
   - `/sounds join-audio {track}` - Set/Unset sound track to play when bot joins voice channel
   - `/sounds leave-audio {track}` - Set/Unset sound track to play when bot leaves voice channel
 

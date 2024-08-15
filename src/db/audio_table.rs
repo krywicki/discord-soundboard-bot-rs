@@ -12,9 +12,13 @@ pub struct AudioTableRow {
     pub name: String,
     pub tags: Tags,
     pub audio_file: audio::AudioFile,
+    #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
+    #[allow(dead_code)]
     pub author_id: Option<u64>,
+    #[allow(dead_code)]
     pub author_name: Option<String>,
+    #[allow(dead_code)]
     pub author_global_name: Option<String>,
 }
 
