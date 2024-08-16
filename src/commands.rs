@@ -343,12 +343,22 @@ pub async fn remove_sound(
 }
 
 #[poise::command(slash_command, guild_only, rename = "display")]
-pub async fn display_sounds(ctx: PoiseContext<'_>) -> PoiseResult {
+pub async fn display_sounds(
+    ctx: PoiseContext<'_>,
+    #[description = "Filter displayed sounds by names & tags"] search: Option<String>,
+) -> PoiseResult {
     log::info!("List sounds buttons as ActionRows grid...");
 
-    poise_check_msg(ctx.reply("Displaying sounds...").await);
+    match search.as_ref() {
+        Some(value) => poise_check_msg(
+            ctx.reply(format!("Display searched sounds for `{value}`"))
+                .await,
+        ),
+        None => poise_check_msg(ctx.reply("Displaying sounds...").await),
+    }
 
     let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
+        .fts_filter(search)
         .page_limit(vars::ACTION_ROWS_LIMIT)
         .build();
 
@@ -495,6 +505,7 @@ Bot for playing sounds in voice chat.
   - `/sounds remove {{track}}` - Removes sound
   - `/sounds edit {{track}}` - Opens form to edit sound track
   - `/sounds display` - Displays a button grid of sounds that can be played in voice channel
+    - `/sounds display {{search}}` - Displays a button grid of sounds filtered by tags or names
   - `/sounds join-audio {{track}}` - Set/Unset sound track to play when bot joins voice channel
   - `/sounds leave-audio {{track}}` - Set/Unset sound track to play when bot leaves voice channel
 ## Prefix Commands
