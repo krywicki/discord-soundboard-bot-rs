@@ -1,6 +1,6 @@
 [package]
 name = "soundboard-bot"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -17,8 +17,8 @@ env_logger = { version = "*" }
 reqwest = { version = "*" }
 openssl = { version = "*", features = ["vendored"] }
 r2d2 = "0.8.10"
-r2d2_sqlite = "0.24.0"
-rusqlite = { version = "0.31.0", features = [
+r2d2_sqlite = "0.25.0"
+rusqlite = { version = "0.32.0", features = [
     "chrono",
     "bundled",
 ] } # identical to r2d2_sqlite rusqlite version, to enable chrono feature
