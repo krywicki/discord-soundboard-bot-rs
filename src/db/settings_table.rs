@@ -1,4 +1,4 @@
-use rusqlite::OptionalExtension;
+use rusqlite::{params, OptionalExtension};
 
 use crate::{commands::PoiseError, common::LogResult};
 
@@ -77,27 +77,23 @@ impl SettingsTable {
 
         let table_name = Self::TABLE_NAME;
         let row_id = settings.id;
-        let join_audio = settings
-            .join_audio
-            .as_ref()
-            .map_or("NULL".into(), |val| format!("'{val}'"));
-        let leave_audio = settings
-            .leave_audio
-            .as_ref()
-            .map_or("NULL".into(), |val| format!("'{val}'"));
+        let join_audio = settings.join_audio.as_ref();
+        let leave_audio = settings.leave_audio.as_ref();
 
         let sql = format!(
             "
             UPDATE {table_name}
             SET
-                join_audio = {join_audio},
-                leave_audio = {leave_audio}
+                join_audio = ?,
+                leave_audio = ?
             WHERE
-                id = {row_id};
+                id = ?;
             "
         );
 
-        self.conn.execute(sql.as_str(), ()).log_err()?;
+        self.conn
+            .execute(sql.as_str(), params![&join_audio, &leave_audio, &row_id])
+            .log_err()?;
 
         Ok(())
     }
@@ -166,8 +162,8 @@ mod tests {
         table.create_table();
         let mut settings = table.get_settings().unwrap();
 
-        let join_audio = Some("join.mp3".into());
-        let leave_audio = Some("leave.mp3".into());
+        let join_audio = Some(String::from("do!@)#$*&%&)'\"op"));
+        let leave_audio = Some(String::from("dope"));
 
         settings.join_audio = join_audio.clone();
         settings.leave_audio = leave_audio.clone();
@@ -175,6 +171,7 @@ mod tests {
         table.update_settings(&settings).unwrap();
 
         let settings = table.get_settings().unwrap();
+
         assert_eq!(settings.join_audio, join_audio);
         assert_eq!(settings.leave_audio, leave_audio);
     }
