@@ -1,32 +1,32 @@
 [package]
 name = "soundboard-bot"
-version = "0.1.9"
+version = "0.1.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serenity = { version = "*" }
-songbird = "*"
-tokio = { version = "*", features = ["full"] }
+serenity = { version = "0.12.*" }
+songbird = "0.5.*"
+tokio = { version = "1.45.*", features = ["full"] }
 symphonia = { version = "*", features = ["mp3"] }
 dotenv = { version = "*" }
-anyhow = { version = "*" }
-log = { version = "*" }
-env_logger = { version = "*" }
-reqwest = { version = "*" }
-openssl = { version = "*", features = ["vendored"] }
-r2d2 = "0.8.10"
-r2d2_sqlite = "0.25.0"
-rusqlite = { version = "0.32.0", features = [
+anyhow = { version = "1.0.*" }
+log = { version = "0.4.27" }
+env_logger = { version = "0.11.*" }
+reqwest = { version = "0.12.20" }
+openssl = { version = "0.10.*", features = ["vendored"] }
+r2d2 = "0.8.*"
+r2d2_sqlite = "0.30.0"
+rusqlite = { version = "0.36.0", features = [
     "chrono",
     "bundled",
 ] } # identical to r2d2_sqlite rusqlite version, to enable chrono feature
-chrono = "0.4.38"
+chrono = "0.4.*"
 poise = "0.6.1"
-config = "0.14.0"
-thiserror = "1.0.61"
-serde = { version = "1.0.203", features = ["derive"] }
-regex = "1.10.4"
-futures = "0.3.30"
-uuid = "1.8.0"
+config = "0.15.*"
+thiserror = "2.0.*"
+serde = { version = "1.0.*", features = ["derive"] }
+regex = "1.11.*"
+futures = "0.3.*"
+uuid = "1.17.*"

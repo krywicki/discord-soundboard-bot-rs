@@ -42,6 +42,35 @@ pub fn poise_check_msg(result: Result<poise::ReplyHandle, serenity::Error>) {
     }
 }
 
+pub async fn is_bot_alone_in_voice_channel(
+    ctx: &Context,
+    guild_id: GuildId,
+) -> Result<bool, PoiseError> {
+    if let Some(bot_voice_channel_id) = get_bot_voice_channel_id(ctx, guild_id).await {
+        if let Some(guild) = ctx.cache.guild(guild_id) {
+            if let Some(channel) = guild.channels.get(&bot_voice_channel_id) {
+                let members = channel.members(&ctx)?;
+                return Ok(members.len() == 1 && members[0].user.id == ctx.cache.current_user().id);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+pub async fn get_bot_voice_channel_id(ctx: &Context, guild_id: GuildId) -> Option<ChannelId> {
+    let user = ctx.cache.current_user();
+    let bot_id = user.id;
+
+    // Get the guild from the cache
+    let guild = ctx.cache.guild(guild_id)?;
+
+    // Get the voice states for the guild
+    let voice_state = guild.voice_states.get(&bot_id)?;
+
+    voice_state.channel_id
+}
+
 #[derive(Debug)]
 pub enum ButtonCustomId {
     PlayAudio(i64),

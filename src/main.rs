@@ -176,29 +176,24 @@ async fn handle_voice_state_update(
     _framework: FrameworkContext<'_>,
     _data: &UserData,
 ) -> PoiseResult {
-    // if member left voice channel
-    if new.channel_id.is_none() {
-        match old {
-            Some(old) => match old.channel_id {
-                Some(channel_id) => {
-                    let (guild_id, members) = {
-                        let guild_channel = ctx.cache.channel(&channel_id).unwrap();
-                        let guild_id = guild_channel.guild_id;
-                        let members = guild_channel.members(&ctx.cache)?;
-                        (guild_id, members)
-                    };
-
-                    // if bot only member in voice channel
-                    if members.len() == 1 && members[0].user.id == ctx.cache.current_user().id {
-                        log::info!("No one in voice channel. Bot is leaving. guild_id: {guild_id}, channel_id: {channel_id}");
-                        let manager = helpers::songbird_get(&ctx).await;
-                        manager.leave_voice_channel(guild_id).await?;
-                    }
-                }
-                None => {}
-            },
-            None => {}
+    // Users with old.channel_id == None are joining a voice channel for the first time
+    // Users with new.channel_id == None are leaving a voice channel
+    // Users with old.channel_id == Some(_) and new.channel_id == Some(_) are moving from one voice channel to another
+    match old {
+        Some(VoiceState {
+            guild_id: Some(old_guild_id),
+            ..
+        }) => {
+            if helpers::is_bot_alone_in_voice_channel(&ctx, *old_guild_id).await? {
+                log::info!(
+                    "No one in voice channel. Bot is leaving. guild_id: {old_guild_id}, channel_id: {}",
+                    new.channel_id.unwrap_or_default()
+                );
+                let manager = helpers::songbird_get(&ctx).await;
+                manager.leave_voice_channel(*old_guild_id).await?;
+            }
         }
+        _ => {}
     }
     Ok(())
 }
