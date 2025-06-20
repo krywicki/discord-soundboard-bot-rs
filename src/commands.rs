@@ -553,8 +553,10 @@ Bot for playing sounds in voice chat.
   - `/sounds add` - Opens form to add sounds
   - `/sounds remove {{track}}` - Removes sound
   - `/sounds edit {{track}}` - Opens form to edit sound track
-  - `/sounds display` - Displays a button grid of sounds that can be played in voice channel
+  - `/sounds display` - Displays sound dispaly options
     - `/sounds display {{search}}` - Displays a button grid of sounds filtered by tags or names
+  - `/sounds pin {{track}}` - Pin sound track to top of sound list
+  - `/sounds unpin {{track}}` - Unpin sound track from top of sound list
   - `/sounds join-audio {{track}}` - Set/Unset sound track to play when bot joins voice channel
   - `/sounds leave-audio {{track}}` - Set/Unset sound track to play when bot leaves voice channel
 ## Prefix Commands

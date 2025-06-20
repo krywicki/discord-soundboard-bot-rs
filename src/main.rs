@@ -452,6 +452,7 @@ pub mod button_handlers {
 
         let paginator = db::AudioTablePaginator::builder(data.db_connection())
             .page_limit(vars::ACTION_ROWS_LIMIT)
+            .limit(Some(data.config.max_display_recently_added))
             .order_by(AudioTableOrderBy::CreatedAt(db::Order::Desc))
             .build();
 
@@ -488,6 +489,7 @@ pub mod button_handlers {
 
         let paginator = db::AudioTablePaginator::builder(data.db_connection())
             .page_limit(vars::ACTION_ROWS_LIMIT)
+            .limit(Some(data.config.max_display_most_played))
             .order_by(AudioTableOrderBy::PlayCount(db::Order::Desc))
             .build();
 

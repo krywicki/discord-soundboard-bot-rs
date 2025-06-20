@@ -13,6 +13,7 @@ pub struct AudioTablePaginator {
     offset: u64,
     fts_filter: Option<String>,
     pinned: Option<bool>,
+    limit: Option<u64>, // Limit for the total number of rows to fetch
 }
 
 impl AudioTablePaginator {
@@ -25,11 +26,28 @@ impl AudioTablePaginator {
         let audio_table_name = AudioTable::TABLE_NAME;
         let fts_table_name = AudioTable::FTS5_TABLE_NAME;
         let order_by_sql = self.order_by.to_sql_str();
-        let page_limit = self.page_limit;
         let offset = self.offset;
         let fts_filter = self.fts_filter.as_ref();
         let mut where_sql: Vec<String> = vec![];
         let mut params: Vec<&dyn rusqlite::ToSql> = vec![];
+        let mut page_limit = self.page_limit;
+
+        if let Some(limit) = self.limit {
+            // If the page limit exceeds the total limit, adjust it
+            if page_limit > limit {
+                page_limit = limit;
+                log::warn!(
+                    "AudioTable Paginator Page limit ({page_limit}) exceeds total limit ({limit}) and has been adjusted."
+                );
+            }
+
+            if self.offset >= limit {
+                return Ok(vec![]);
+            } else if self.offset + page_limit > limit {
+                // Adjust the page limit if it exceeds the total limit
+                page_limit = limit - self.offset;
+            }
+        }
 
         if let Some(pinned) = self.pinned.as_ref() {
             where_sql.push("pinned = ?".into());
@@ -75,8 +93,8 @@ impl AudioTablePaginator {
         let row_iter = stmt
             .query_map(params.as_slice(), |row| AudioTableRow::try_from(row))
             .map_err(|err| format!("Error in AudioTablePaginator - {err}"))?;
-        self.offset += self.page_limit;
-        return Ok(row_iter
+
+        let rows: Vec<AudioTableRow> = row_iter
             .filter_map(|row| match row {
                 Ok(val) => Some(val),
                 Err(err) => {
@@ -84,59 +102,61 @@ impl AudioTablePaginator {
                     None
                 }
             })
-            .collect());
+            .collect();
+
+        self.offset += rows.len() as u64;
+
+        Ok(rows)
     }
 }
 
 pub struct AudioTablePaginatorBuilder {
-    conn: DbConnection,
-    order_by: AudioTableOrderBy,
-    page_limit: u64,
-    fts_filter: Option<String>,
-    pinned: Option<bool>,
+    paginator: AudioTablePaginator,
 }
 
 impl AudioTablePaginatorBuilder {
     pub fn new(conn: DbConnection) -> Self {
         Self {
-            conn: conn,
-            order_by: AudioTableOrderBy::Id(db::Order::Asc),
-            page_limit: 500,
-            fts_filter: None,
-            pinned: None,
+            paginator: AudioTablePaginator {
+                conn: conn,
+                order_by: AudioTableOrderBy::Id(db::Order::Asc),
+                page_limit: 500,
+                fts_filter: None,
+                pinned: None,
+                offset: 0,
+                limit: None,
+            },
         }
     }
 
     #[allow(unused)]
     pub fn order_by(mut self, value: AudioTableOrderBy) -> Self {
-        self.order_by = value;
+        self.paginator.order_by = value;
         self
     }
 
     pub fn page_limit(mut self, value: u64) -> Self {
-        self.page_limit = value;
+        self.paginator.page_limit = value;
         self
     }
 
     pub fn fts_filter(mut self, value: Option<String>) -> Self {
-        self.fts_filter = value;
+        self.paginator.fts_filter = value;
         self
     }
 
     pub fn pinned(mut self, value: Option<bool>) -> Self {
-        self.pinned = value;
+        self.paginator.pinned = value;
+        self
+    }
+
+    pub fn limit(mut self, value: Option<u64>) -> Self {
+        self.paginator.limit = value;
         self
     }
 
     pub fn build(self) -> AudioTablePaginator {
-        AudioTablePaginator {
-            conn: self.conn,
-            order_by: self.order_by,
-            page_limit: self.page_limit,
-            offset: 0,
-            fts_filter: self.fts_filter,
-            pinned: self.pinned,
-        }
+        self.paginator
     }
 }
 
@@ -221,6 +241,51 @@ mod tests {
 
         let page = paginator.next();
         assert!(page.is_none());
+    }
+
+    #[test]
+    fn audio_table_pagination_limit_test() {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        let table = AudioTable::new(db_pool.get().unwrap());
+        table.create_table();
+
+        for _ in 0..3 {
+            table
+                .insert_audio_row(make_audio_table_row_insert())
+                .unwrap();
+        }
+
+        // Test pagination with limit
+        {
+            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+                .page_limit(1)
+                .limit(Some(2))
+                .build();
+
+            let page = paginator.next().unwrap().unwrap();
+            assert_eq!(page.len(), 1);
+
+            let page = paginator.next().unwrap().unwrap();
+            assert_eq!(page.len(), 1);
+
+            let page = paginator.next();
+            assert!(page.is_none());
+        }
+
+        // Test pagination page_limit exceeds total limit
+        {
+            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+                .page_limit(5)
+                .limit(Some(3))
+                .build();
+
+            let page = paginator.next().unwrap().unwrap();
+            assert_eq!(page.len(), 3);
+
+            let page = paginator.next();
+            assert!(page.is_none());
+        }
     }
 
     #[test]
