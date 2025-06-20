@@ -1,4 +1,4 @@
-use rusqlite::params;
+use crate::db;
 
 use super::{
     audio_table::{AudioTableOrderBy, AudioTableRow},
@@ -12,6 +12,7 @@ pub struct AudioTablePaginator {
     page_limit: u64,
     offset: u64,
     fts_filter: Option<String>,
+    pinned: Option<bool>,
 }
 
 impl AudioTablePaginator {
@@ -23,19 +24,35 @@ impl AudioTablePaginator {
         let conn = &self.conn;
         let audio_table_name = AudioTable::TABLE_NAME;
         let fts_table_name = AudioTable::FTS5_TABLE_NAME;
-        let order_by = self.order_by.col_name();
+        let order_by_sql = self.order_by.to_sql_str();
         let page_limit = self.page_limit;
         let offset = self.offset;
         let fts_filter = self.fts_filter.as_ref();
+        let mut where_sql: Vec<String> = vec![];
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![];
+
+        if let Some(pinned) = self.pinned.as_ref() {
+            where_sql.push("pinned = ?".into());
+            params.push(pinned);
+        }
+
+        let where_sql = if where_sql.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_sql.join(" AND "))
+        };
 
         let sql = match fts_filter {
-            Some(_) => {
+            Some(fts_filter) => {
+                params.insert(0, fts_filter);
+
                 // fts filtering
                 format!(
                     "SELECT Audio.* FROM {audio_table_name} Audio
                     INNER JOIN {fts_table_name}(?) FTS
                         ON Audio.id = FTS.rowid
-                    ORDER BY {order_by}
+                    {where_sql}
+                    ORDER BY {order_by_sql}
                     LIMIT {page_limit}
                     OFFSET {offset};"
                 )
@@ -43,7 +60,8 @@ impl AudioTablePaginator {
             None => {
                 format!(
                     "SELECT * FROM {audio_table_name}
-                    ORDER BY {order_by}
+                    {where_sql}
+                    ORDER BY {order_by_sql}
                     LIMIT {page_limit}
                     OFFSET {offset};"
                 )
@@ -54,42 +72,19 @@ impl AudioTablePaginator {
             .prepare(sql.as_ref())
             .expect("Failed to prepare sql stmt");
 
-        match fts_filter {
-            Some(fts) => {
-                let row_iter = stmt
-                    .query_map(params![&fts], |row| AudioTableRow::try_from(row))
-                    .map_err(|err| format!("Error in AudioTablePaginator - {err}"))?;
-
-                self.offset += self.page_limit;
-
-                return Ok(row_iter
-                    .filter_map(|row| match row {
-                        Ok(val) => Some(val),
-                        Err(err) => {
-                            log::error!("{err}");
-                            None
-                        }
-                    })
-                    .collect());
-            }
-            None => {
-                let row_iter = stmt
-                    .query_map([], |row| AudioTableRow::try_from(row))
-                    .map_err(|err| format!("Error in AudioTablePaginator - {err}"))?;
-
-                self.offset += self.page_limit;
-
-                return Ok(row_iter
-                    .filter_map(|row| match row {
-                        Ok(val) => Some(val),
-                        Err(err) => {
-                            log::error!("{err}");
-                            None
-                        }
-                    })
-                    .collect());
-            }
-        }
+        let row_iter = stmt
+            .query_map(params.as_slice(), |row| AudioTableRow::try_from(row))
+            .map_err(|err| format!("Error in AudioTablePaginator - {err}"))?;
+        self.offset += self.page_limit;
+        return Ok(row_iter
+            .filter_map(|row| match row {
+                Ok(val) => Some(val),
+                Err(err) => {
+                    log::error!("{err}");
+                    None
+                }
+            })
+            .collect());
     }
 }
 
@@ -98,15 +93,17 @@ pub struct AudioTablePaginatorBuilder {
     order_by: AudioTableOrderBy,
     page_limit: u64,
     fts_filter: Option<String>,
+    pinned: Option<bool>,
 }
 
 impl AudioTablePaginatorBuilder {
     pub fn new(conn: DbConnection) -> Self {
         Self {
             conn: conn,
-            order_by: AudioTableOrderBy::Id,
+            order_by: AudioTableOrderBy::Id(db::Order::Asc),
             page_limit: 500,
             fts_filter: None,
+            pinned: None,
         }
     }
 
@@ -126,6 +123,11 @@ impl AudioTablePaginatorBuilder {
         self
     }
 
+    pub fn pinned(mut self, value: Option<bool>) -> Self {
+        self.pinned = value;
+        self
+    }
+
     pub fn build(self) -> AudioTablePaginator {
         AudioTablePaginator {
             conn: self.conn,
@@ -133,6 +135,7 @@ impl AudioTablePaginatorBuilder {
             page_limit: self.page_limit,
             offset: 0,
             fts_filter: self.fts_filter,
+            pinned: self.pinned,
         }
     }
 }
@@ -166,24 +169,24 @@ mod tests {
 
     use crate::{
         audio::AudioFile,
-        db::{audio_table::AudioTableRowInsert, Table},
+        db::{
+            audio_table::{AudioTableRowInsert, AudioTableRowInsertBuilder},
+            Table,
+        },
         helpers::{self, uuid_v4_str},
     };
 
     use super::*;
 
     fn make_audio_table_row_insert() -> AudioTableRowInsert {
-        AudioTableRowInsert {
-            audio_file: AudioFile::new(
-                std::path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
-            ),
-            author_global_name: None,
-            name: format!("{}{}", uuid_v4_str(), "#!@#$%^&*()_-+=?/.\"\\'"),
-            tags: uuid_v4_str().into(),
-            created_at: chrono::Utc::now(),
-            author_id: None,
-            author_name: None,
-        }
+        let name = format!("{}{}", uuid_v4_str(), "#!@#$%^&*()_-+=?/.\"\\'");
+        let audio_file = AudioFile::new(
+            std::path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
+        );
+
+        AudioTableRowInsertBuilder::new(name, audio_file)
+            .tags(uuid_v4_str())
+            .build()
     }
 
     fn make_detailed_audio_table_row_insert(name: &str, tags: &str) -> AudioTableRowInsert {

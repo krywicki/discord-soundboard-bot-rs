@@ -5,7 +5,7 @@ use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEven
 use crate::{
     audio::{self, AudioFile, RemoveAudioFile},
     common::{LogResult, UserData},
-    db::{self, AudioTable, AudioTableRowInsert, Tags},
+    db::{self, audio_table::AudioTableRowInsertBuilder, AudioTable, Tags},
     helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
     vars,
 };
@@ -141,9 +141,11 @@ pub async fn play(
                 ctx.reply(format!("Playing track `{audio_track_name}`"))
                     .await,
             );
+
             manager
                 .play_audio(guild_id, channel_id, &row.audio_file)
                 .await?;
+            table.increment_play_count(row.id).log_err()?;
         }
         None => poise_check_msg(
             ctx.reply(format!("Audio Track '{audio_track_name}' not found"))
@@ -165,7 +167,9 @@ pub async fn play(
         "edit_sound",
         "set_join_audio",
         "set_leave_audio",
-        "display_help"
+        "display_help",
+        "pin_sound",
+        "unpin_sound"
     )
 )]
 pub async fn sounds(_ctx: PoiseContext<'_>) -> PoiseResult {
@@ -206,15 +210,8 @@ pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
     let mut inserted = 0;
     let table = AudioTable::new(ctx.data().db_connection());
     for audio_file in audio_files {
-        let new_audio = AudioTableRowInsert {
-            name: audio_file.audio_title(),
-            tags: Tags::new(),
-            audio_file: audio_file,
-            created_at: chrono::Utc::now(),
-            author_id: None,
-            author_name: None,
-            author_global_name: None,
-        };
+        let new_audio =
+            AudioTableRowInsertBuilder::new(audio_file.audio_title(), audio_file).build();
 
         table
             .insert_audio_row(new_audio)
@@ -300,15 +297,14 @@ pub async fn add_sound(ctx: PoiseAppContext<'_>) -> PoiseResult {
             };
 
             table
-                .insert_audio_row(AudioTableRowInsert {
-                    name: data.name.clone(),
-                    audio_file: audio_file,
-                    author_global_name: ctx.author().global_name.clone(),
-                    author_id: Some(ctx.author().id.into()),
-                    author_name: Some(ctx.author().name.clone()),
-                    tags: tags,
-                    created_at: chrono::Utc::now(),
-                })
+                .insert_audio_row(
+                    AudioTableRowInsertBuilder::new(data.name.clone(), audio_file)
+                        .author_global_name(ctx.author().global_name.clone())
+                        .author_id(Some(ctx.author().id.into()))
+                        .author_name(Some(ctx.author().name.clone()))
+                        .tags(tags)
+                        .build(),
+                )
                 .log_err()?;
         }
     }
@@ -342,6 +338,48 @@ pub async fn remove_sound(
     Ok(())
 }
 
+#[poise::command(slash_command, guild_only, rename = "pin")]
+pub async fn pin_sound(
+    ctx: PoiseContext<'_>,
+    #[rename = "track"]
+    #[description = "Audio track to pin"]
+    #[autocomplete = "helpers::autocomplete_audio_track_name"]
+    audio_track_name: String,
+) -> PoiseResult {
+    log::info!("Pinning audio track - {audio_track_name}");
+
+    let table = ctx.data().audio_table();
+    table
+        .update_audio_row_pin_by_name(&audio_track_name, true)
+        .log_err()?;
+
+    ctx.reply(format!("Pinned audio track `{audio_track_name}`"))
+        .await?;
+
+    Ok(())
+}
+
+#[poise::command(slash_command, guild_only, rename = "unpin")]
+pub async fn unpin_sound(
+    ctx: PoiseContext<'_>,
+    #[rename = "track"]
+    #[description = "Audio track to pin"]
+    #[autocomplete = "helpers::autocomplete_audio_track_name"]
+    audio_track_name: String,
+) -> PoiseResult {
+    log::info!("Unpinning audio track - {audio_track_name}");
+
+    let table = ctx.data().audio_table();
+    table
+        .update_audio_row_pin_by_name(&audio_track_name, false)
+        .log_err()?;
+
+    ctx.reply(format!("Unpinned audio track `{audio_track_name}`"))
+        .await?;
+
+    Ok(())
+}
+
 #[poise::command(slash_command, guild_only, rename = "display")]
 pub async fn display_sounds(
     ctx: PoiseContext<'_>,
@@ -350,26 +388,37 @@ pub async fn display_sounds(
     log::info!("List sounds buttons as ActionRows grid...");
 
     match search.as_ref() {
-        Some(value) => poise_check_msg(
-            ctx.reply(format!("Display searched sounds for `{value}`"))
-                .await,
-        ),
-        None => poise_check_msg(ctx.reply("Displaying sounds...").await),
-    }
+        Some(value) => {
+            poise_check_msg(
+                ctx.reply(format!("Display searched sounds for `{value}`"))
+                    .await,
+            );
 
-    let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
-        .fts_filter(search)
-        .page_limit(vars::ACTION_ROWS_LIMIT)
-        .build();
+            let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
+                .fts_filter(search)
+                .page_limit(vars::ACTION_ROWS_LIMIT)
+                .build();
 
-    for audio_rows in paginator {
-        let audio_rows = audio_rows.log_err()?;
+            for audio_rows in paginator {
+                let audio_rows = audio_rows.log_err()?;
 
-        // ActionRows: Have a 5x5 grid limit
-        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-        let builder = CreateMessage::new().components(btn_grid);
-        check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
+                // ActionRows: Have a 5x5 grid limit
+                // (https://discordjs.guide/message-components/action-rows.html#action-rows)
+                let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
+                let builder = CreateMessage::new().components(btn_grid);
+                check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
+            }
+        }
+        None => {
+            poise_check_msg(ctx.reply("Displaying sounds...").await);
+            let markdown_content = "## Sound Display Options";
+
+            let builder = CreateMessage::new()
+                .content(markdown_content)
+                .components(vec![helpers::make_display_buttons()]);
+
+            check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
+        }
     }
 
     Ok(())

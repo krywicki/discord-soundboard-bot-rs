@@ -79,6 +79,8 @@ cargo build --release -F sqlite3-bundled
 - `DISCORD_BOT_DOTENV_FILE` - **default**: `.env` - The dotenv file to load when launching the application
 - `DISCORD_BOT_SQLITE_DB_FILE` - **default**: `./bot.db3` - Path to create/use SQLite3 database file.
 - `DISCORD_BOT_MAX_AUDIO_FILE_DURATION` - **default**: `7000` - Maximum allowed length of an audio track in milliseconds.
+- `DISCORD_BOT_MAX_DISPLAY_RECENTLY_ADDED` - **default**: `50` - Maximum num of recently added audio tracks to display.
+- `DISCORD_BOT_MAX_DISPLAY_MOST_PLAYED` - **default**: `50` - Maximum num of most played audio tracks to display.
 - `RUST_LOG` - Set log level for application (or speicific modules) in the application
   - Examples
     - `RUST_LOG=error`
