@@ -72,8 +72,7 @@ impl AudioTablePaginator {
                         ON Audio.id = FTS.rowid
                     {where_sql}
                     ORDER BY {order_by_sql}
-                    LIMIT {page_limit}
-                    OFFSET {offset}"
+                    "
                 )
             }
             None => {
@@ -81,20 +80,32 @@ impl AudioTablePaginator {
                     "SELECT * FROM {audio_table_name}
                     {where_sql}
                     ORDER BY {order_by_sql}
-                    LIMIT {page_limit}
-                    OFFSET {offset}"
+                    "
                 )
             }
         };
 
         // reverse results correctly for pagination
         if self.reverse {
+            let limit_sql = if let Some(limit) = self.limit {
+                format!("LIMIT {limit}")
+            } else {
+                String::new()
+            };
+
             sql = format!(
-                "SELECT * FROM ({sql}) ORDER BY {};",
+                "SELECT * FROM ({sql} {limit_sql})
+                ORDER BY {}
+                LIMIT {page_limit}
+                OFFSET {offset};",
                 self.order_by.inverse_order().to_sql_str()
             );
         } else {
-            sql = format!("{};", sql);
+            sql = format!(
+                "{sql}
+            LIMIT {page_limit}
+            OFFSET {offset};"
+            );
         }
 
         let mut stmt = conn
@@ -317,38 +328,74 @@ mod tests {
 
         let mut row = make_audio_table_row_insert();
         row.name = "first".into();
+        row.tags = "tag1".into();
         table.insert_audio_row(row).unwrap();
 
         row = make_audio_table_row_insert();
         row.name = "second".into();
+        row.tags = "tag2".into();
         table.insert_audio_row(row).unwrap();
 
         row = make_audio_table_row_insert();
         row.name = "third".into();
+        row.tags = "tag1".into();
         table.insert_audio_row(row).unwrap();
 
         row = make_audio_table_row_insert();
         row.name = "fourth".into();
+        row.tags = "tag2".into();
         table.insert_audio_row(row).unwrap();
 
-        let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
-            .page_limit(2)
-            .order_by(AudioTableOrderBy::Id(db::Order::Desc))
-            .reverse(true)
-            .build();
+        row = make_audio_table_row_insert();
+        row.name = "fifth".into();
+        row.tags = "tag1".into();
+        table.insert_audio_row(row).unwrap();
 
-        let page = paginator.next().unwrap().unwrap();
-        assert_eq!(page.len(), 2);
+        // Test reverse pagination
+        {
+            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+                .limit(Some(4))
+                .page_limit(2)
+                .order_by(AudioTableOrderBy::Id(db::Order::Desc))
+                .reverse(true)
+                .build();
 
-        assert_eq!(page[0].name, "third");
-        assert_eq!(page[1].name, "fourth");
+            let page = paginator.next().unwrap().unwrap();
+            assert_eq!(page.len(), 2);
 
-        let page = paginator.next().unwrap().unwrap();
-        assert_eq!(page[0].name, "first");
-        assert_eq!(page[1].name, "second");
+            assert_eq!(page[0].name, "second");
+            assert_eq!(page[1].name, "third");
 
-        let page = paginator.next();
-        assert!(page.is_none());
+            let page = paginator.next().unwrap().unwrap();
+            assert_eq!(page[0].name, "fourth");
+            assert_eq!(page[1].name, "fifth");
+
+            let page = paginator.next();
+            assert!(page.is_none());
+        }
+
+        // Test reverse pagination with fts
+        {
+            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+                .limit(Some(4))
+                .page_limit(2)
+                .order_by(AudioTableOrderBy::Id(db::Order::Desc))
+                .reverse(true)
+                .fts_filter(Some("tag1".into()))
+                .build();
+
+            let page = paginator.next().unwrap().unwrap();
+            assert_eq!(page.len(), 2);
+
+            assert_eq!(page[0].name, "first");
+            assert_eq!(page[1].name, "third");
+
+            let page = paginator.next().unwrap().unwrap();
+            assert_eq!(page[0].name, "fifth");
+
+            let page = paginator.next();
+            assert!(page.is_none());
+        }
     }
 
     #[test]
