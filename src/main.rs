@@ -176,29 +176,24 @@ async fn handle_voice_state_update(
     _framework: FrameworkContext<'_>,
     _data: &UserData,
 ) -> PoiseResult {
-    // if member left voice channel
-    if new.channel_id.is_none() {
-        match old {
-            Some(old) => match old.channel_id {
-                Some(channel_id) => {
-                    let (guild_id, members) = {
-                        let guild_channel = ctx.cache.channel(&channel_id).unwrap();
-                        let guild_id = guild_channel.guild_id;
-                        let members = guild_channel.members(&ctx.cache)?;
-                        (guild_id, members)
-                    };
-
-                    // if bot only member in voice channel
-                    if members.len() == 1 && members[0].user.id == ctx.cache.current_user().id {
-                        log::info!("No one in voice channel. Bot is leaving. guild_id: {guild_id}, channel_id: {channel_id}");
-                        let manager = helpers::songbird_get(&ctx).await;
-                        manager.leave_voice_channel(guild_id).await?;
-                    }
-                }
-                None => {}
-            },
-            None => {}
+    // Users with old.channel_id == None are joining a voice channel for the first time
+    // Users with new.channel_id == None are leaving a voice channel
+    // Users with old.channel_id == Some(_) and new.channel_id == Some(_) are moving from one voice channel to another
+    match old {
+        Some(VoiceState {
+            guild_id: Some(old_guild_id),
+            ..
+        }) => {
+            if helpers::is_bot_alone_in_voice_channel(&ctx, *old_guild_id).await? {
+                log::info!(
+                    "No one in voice channel. Bot is leaving. guild_id: {old_guild_id}, channel_id: {}",
+                    new.channel_id.unwrap_or_default()
+                );
+                let manager = helpers::songbird_get(&ctx).await;
+                manager.leave_voice_channel(*old_guild_id).await?;
+            }
         }
+        _ => {}
     }
     Ok(())
 }
@@ -240,9 +235,9 @@ async fn handle_component_interaction(
 
 async fn handle_btn_interaction(
     ctx: &Context,
-    _interaction: &Interaction,
+    interaction: &Interaction,
     component: &ComponentInteraction,
-    _framework: FrameworkContext<'_>,
+    framework: FrameworkContext<'_>,
     data: &UserData,
 ) -> PoiseResult {
     log::debug!("Interaction Component Button pressed");
@@ -256,38 +251,49 @@ async fn handle_btn_interaction(
 
     match ButtonCustomId::try_from(custom_id.clone())? {
         ButtonCustomId::PlayAudio(audio_track_id) => {
-            log::info!("Play Audio Button Pressed - '{custom_id}'");
-
-            let channel_id = component.channel_id;
-            let guild_id = component
-                .guild_id
-                .ok_or("ComponentInteraction.guild_id is None")
-                .log_err()?;
-
-            let table = data.audio_table();
-
-            match table.find_audio_row(db::UniqueAudioTableCol::Id(audio_track_id)) {
-                Some(audio_row) => {
-                    log::info!(
-                        "Found audio track. Name: {}, File: {}",
-                        audio_row.name,
-                        audio_row.audio_file.to_string_lossy()
-                    );
-
-                    let manager = helpers::songbird_get(&ctx).await;
-                    manager
-                        .play_audio(guild_id, channel_id, &audio_row.audio_file)
-                        .await
-                        .ok();
-                }
-                None => {
-                    return Err(format!(
-                        "Unable to locate audio track for button custom id"
-                    )
-                    .into())
-                    .log_err();
-                }
-            }
+            button_handlers::handle_play_audio_btn(
+                ctx,
+                interaction,
+                component,
+                framework,
+                data,
+                audio_track_id,
+            )
+            .await?;
+        }
+        ButtonCustomId::DisplayAll => {
+            button_handlers::handle_display_all_btn(ctx, interaction, component, framework, data)
+                .await?;
+        }
+        ButtonCustomId::DisplayPinned => {
+            button_handlers::handle_display_pinned_btn(
+                ctx,
+                interaction,
+                component,
+                framework,
+                data,
+            )
+            .await?;
+        }
+        ButtonCustomId::DisplayRecentlyAdded => {
+            button_handlers::handle_display_recently_added_btn(
+                ctx,
+                interaction,
+                component,
+                framework,
+                data,
+            )
+            .await?;
+        }
+        ButtonCustomId::DisplayMostPlayed => {
+            button_handlers::handle_display_most_played_btn(
+                ctx,
+                interaction,
+                component,
+                framework,
+                data,
+            )
+            .await?;
         }
         ButtonCustomId::Unknown(value) => {
             return Err(format!(
@@ -299,4 +305,206 @@ async fn handle_btn_interaction(
     }
 
     Ok(())
+}
+
+pub mod button_handlers {
+    use serenity::all::{CacheHttp, CreateMessage};
+
+    use crate::{db::audio_table::AudioTableOrderBy, helpers::check_msg};
+
+    use super::*;
+
+    pub async fn handle_play_audio_btn(
+        ctx: &Context,
+        _interaction: &Interaction,
+        component: &ComponentInteraction,
+        _framework: FrameworkContext<'_>,
+        data: &UserData,
+        audio_track_id: i64,
+    ) -> PoiseResult {
+        log::info!("Play Audio Button Pressed - '{audio_track_id}'");
+
+        let channel_id = component.channel_id;
+        let guild_id = component
+            .guild_id
+            .ok_or("ComponentInteraction.guild_id is None")
+            .log_err()?;
+
+        let table = data.audio_table();
+
+        match table.find_audio_row(db::UniqueAudioTableCol::Id(audio_track_id)) {
+            Some(audio_row) => {
+                log::info!(
+                    "Found audio track. Name: {}, File: {}",
+                    audio_row.name,
+                    audio_row.audio_file.to_string_lossy()
+                );
+
+                let manager = helpers::songbird_get(&ctx).await;
+                manager
+                    .play_audio(guild_id, channel_id, &audio_row.audio_file)
+                    .await
+                    .ok();
+
+                table.increment_play_count(audio_row.id)?;
+            }
+            None => {
+                return Err(format!("Unable to locate audio track for button custom id").into())
+                    .log_err();
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn handle_display_all_btn(
+        ctx: &Context,
+        _interaction: &Interaction,
+        component: &ComponentInteraction,
+        _framework: FrameworkContext<'_>,
+        data: &UserData,
+    ) -> PoiseResult {
+        log::info!("Displaying all sounds buttons as ActionRows grid...");
+
+        let channel_id = component.channel_id;
+
+        let paginator = db::AudioTablePaginator::builder(data.db_connection())
+            .order_by(AudioTableOrderBy::CreatedAt(db::Order::Desc))
+            .page_limit(vars::ACTION_ROWS_LIMIT)
+            .build();
+
+        let markdown_content = "## Displaying All Sounds...";
+
+        check_msg(
+            channel_id
+                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .await,
+        );
+
+        for audio_rows in paginator {
+            let audio_rows = audio_rows.log_err()?;
+
+            // ActionRows: Have a 5x5 grid limit
+            // (https://discordjs.guide/message-components/action-rows.html#action-rows)
+            let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
+            let builder = CreateMessage::new().components(btn_grid);
+            check_msg(channel_id.send_message(&ctx.http(), builder).await);
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_display_pinned_btn(
+        ctx: &Context,
+        _interaction: &Interaction,
+        component: &ComponentInteraction,
+        _framework: FrameworkContext<'_>,
+        data: &UserData,
+    ) -> PoiseResult {
+        log::info!("Displaying pinned sounds buttons as ActionRows grid...");
+
+        let channel_id = component.channel_id;
+
+        let markdown_content = "## Displaying Pinned Sounds...";
+
+        check_msg(
+            channel_id
+                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .await,
+        );
+
+        let paginator = db::AudioTablePaginator::builder(data.db_connection())
+            .page_limit(vars::ACTION_ROWS_LIMIT)
+            .pinned(Some(true))
+            .order_by(AudioTableOrderBy::Name(db::Order::Asc))
+            .build();
+
+        for audio_rows in paginator {
+            let audio_rows = audio_rows.log_err()?;
+
+            // ActionRows: Have a 5x5 grid limit
+            // (https://discordjs.guide/message-components/action-rows.html#action-rows)
+            let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
+            let builder = CreateMessage::new().components(btn_grid);
+            check_msg(channel_id.send_message(&ctx.http(), builder).await);
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_display_recently_added_btn(
+        ctx: &Context,
+        _interaction: &Interaction,
+        component: &ComponentInteraction,
+        _framework: FrameworkContext<'_>,
+        data: &UserData,
+    ) -> PoiseResult {
+        log::info!("Displaying recently added sounds buttons as ActionRows grid...");
+
+        let channel_id = component.channel_id;
+
+        let markdown_content = "## Displaying Recently Added Sounds...";
+
+        check_msg(
+            channel_id
+                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .await,
+        );
+
+        let paginator = db::AudioTablePaginator::builder(data.db_connection())
+            .page_limit(vars::ACTION_ROWS_LIMIT)
+            .limit(Some(data.config.max_display_recently_added))
+            .order_by(AudioTableOrderBy::CreatedAt(db::Order::Desc))
+            .reverse(true)
+            .build();
+
+        for audio_rows in paginator {
+            let audio_rows = audio_rows.log_err()?;
+
+            // ActionRows: Have a 5x5 grid limit
+            // (https://discordjs.guide/message-components/action-rows.html#action-rows)
+            let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
+            let builder = CreateMessage::new().components(btn_grid);
+            check_msg(channel_id.send_message(&ctx.http(), builder).await);
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_display_most_played_btn(
+        ctx: &Context,
+        _interaction: &Interaction,
+        component: &ComponentInteraction,
+        _framework: FrameworkContext<'_>,
+        data: &UserData,
+    ) -> PoiseResult {
+        log::info!("Displaying most played sounds buttons as ActionRows grid...");
+
+        let channel_id = component.channel_id;
+        let markdown_content = "## Displaying Most Played Sounds...\n\
+            **Most recent goes from bottom to top**";
+
+        check_msg(
+            channel_id
+                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .await,
+        );
+
+        let paginator = db::AudioTablePaginator::builder(data.db_connection())
+            .page_limit(vars::ACTION_ROWS_LIMIT)
+            .limit(Some(data.config.max_display_most_played))
+            .order_by(AudioTableOrderBy::PlayCount(db::Order::Desc))
+            .build();
+
+        for audio_rows in paginator {
+            let audio_rows = audio_rows.log_err()?;
+
+            // ActionRows: Have a 5x5 grid limit
+            // (https://discordjs.guide/message-components/action-rows.html#action-rows)
+            let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
+            let builder = CreateMessage::new().components(btn_grid);
+            check_msg(channel_id.send_message(&ctx.http(), builder).await);
+        }
+
+        Ok(())
+    }
 }

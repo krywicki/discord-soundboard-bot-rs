@@ -17,6 +17,10 @@ pub struct Config {
         deserialize_with = "de_max_audio_file_duration"
     )]
     pub max_audio_file_duration: std::time::Duration,
+    #[serde(default = "default_max_display_recently_added")]
+    pub max_display_recently_added: u64,
+    #[serde(default = "default_max_display_most_played")]
+    pub max_display_most_played: u64,
 }
 
 impl Config {
@@ -78,8 +82,18 @@ impl Default for Config {
             command_prefix: default_command_prefix(),
             sqlite_db_file: default_sqlite_db_file(),
             max_audio_file_duration: default_max_audio_file_duration(),
+            max_display_recently_added: default_max_display_recently_added(),
+            max_display_most_played: default_max_display_most_played(),
         }
     }
+}
+
+fn default_max_display_most_played() -> u64 {
+    50
+}
+
+fn default_max_display_recently_added() -> u64 {
+    50
 }
 
 fn default_audio_dir() -> path::PathBuf {

@@ -3,7 +3,7 @@ use std::ops::Deref;
 use regex::Regex;
 use rusqlite::{params, types::FromSql, ToSql};
 
-use crate::{audio, commands::PoiseError, common::LogResult};
+use crate::{audio, commands::PoiseError, common::LogResult, db::Order};
 
 use super::{DbConnection, Table};
 
@@ -20,6 +20,10 @@ pub struct AudioTableRow {
     pub author_name: Option<String>,
     #[allow(dead_code)]
     pub author_global_name: Option<String>,
+    pub play_count: i64,
+    pub last_played_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub popularity: f64,
+    pub pinned: bool,
 }
 
 pub struct Tags(Vec<String>);
@@ -124,6 +128,16 @@ impl TryFrom<&rusqlite::Row<'_>> for AudioTableRow {
             author_global_name: row
                 .get("author_global_name")
                 .log_err_msg("From row.author_global_name fail")?,
+            play_count: row
+                .get("play_count")
+                .log_err_msg("From row.play_count fail")?,
+            last_played_at: row
+                .get("last_played_at")
+                .log_err_msg("From row.last_played_at fail")?,
+            popularity: row
+                .get("popularity")
+                .log_err_msg("From row.popularity fail")?,
+            pinned: row.get("pinned").log_err_msg("From row.pinned fail")?,
         })
     }
 }
@@ -136,6 +150,100 @@ pub struct AudioTableRowInsert {
     pub author_id: Option<u64>,
     pub author_name: Option<String>,
     pub author_global_name: Option<String>,
+    pub play_count: i64,
+    pub last_played_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub popularity: f64,
+    pub pinned: bool,
+}
+
+pub struct AudioTableRowInsertBuilder {
+    row_insert: AudioTableRowInsert,
+}
+
+impl AudioTableRowInsertBuilder {
+    pub fn new(name: impl AsRef<str>, audio_file: audio::AudioFile) -> Self {
+        Self {
+            row_insert: AudioTableRowInsert {
+                name: name.as_ref().into(),
+                tags: Tags::new(),
+                audio_file: audio_file,
+                created_at: chrono::Utc::now(),
+                author_id: None,
+                author_name: None,
+                author_global_name: None,
+                play_count: 0,
+                last_played_at: None,
+                popularity: 0.0,
+                pinned: false,
+            },
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.row_insert.name = name.into();
+        self
+    }
+
+    pub fn tags(mut self, tags: impl Into<Tags>) -> Self {
+        self.row_insert.tags = tags.into();
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn audio_file(mut self, audio_file: audio::AudioFile) -> Self {
+        self.row_insert.audio_file = audio_file;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn created_at(mut self, created_at: chrono::DateTime<chrono::Utc>) -> Self {
+        self.row_insert.created_at = created_at;
+        self
+    }
+
+    pub fn author_id(mut self, author_id: Option<u64>) -> Self {
+        self.row_insert.author_id = author_id;
+        self
+    }
+
+    pub fn author_name(mut self, author_name: Option<String>) -> Self {
+        self.row_insert.author_name = author_name;
+        self
+    }
+
+    pub fn author_global_name(mut self, author_global_name: Option<String>) -> Self {
+        self.row_insert.author_global_name = author_global_name;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn play_count(mut self, play_count: i64) -> Self {
+        self.row_insert.play_count = play_count;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn last_played_at(mut self, last_played_at: Option<chrono::DateTime<chrono::Utc>>) -> Self {
+        self.row_insert.last_played_at = last_played_at;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn popularity(mut self, popularity: f64) -> Self {
+        self.row_insert.popularity = popularity;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn pinned(mut self, pinned: bool) -> Self {
+        self.row_insert.pinned = pinned;
+        self
+    }
+
+    pub fn build(self) -> AudioTableRowInsert {
+        self.row_insert
+    }
 }
 
 impl AsRef<AudioTableRowInsert> for AudioTableRowInsert {
@@ -329,6 +437,47 @@ impl AudioTable {
         Ok(())
     }
 
+    pub fn increment_play_count(&self, row_id: i64) -> Result<(), String> {
+        log::info!("Incrementing play count for audio row with id: {row_id}");
+
+        let table_name = Self::TABLE_NAME;
+        let last_played_at = chrono::Utc::now();
+
+        let sql = format!(
+            "UPDATE {table_name}
+            SET
+                play_count = play_count + 1,
+                last_played_at = ?
+            WHERE id = ?"
+        );
+
+        self.conn
+            .execute(sql.as_str(), params![&last_played_at, &row_id])
+            .log_err_msg("Failed incrementing play count")
+            .map_err(|err| err.to_string())?;
+
+        Ok(())
+    }
+
+    pub fn update_audio_row_pin_by_name(
+        &self,
+        audio_name: impl AsRef<str>,
+        pinned: bool,
+    ) -> Result<(), PoiseError> {
+        let name = audio_name.as_ref();
+        log::info!("Updating audio row pin by name: {name}, pinned: {pinned}");
+
+        let table_name = Self::TABLE_NAME;
+        let sql = format!("UPDATE {table_name} SET pinned = ? WHERE name = ?;");
+
+        self.conn
+            .execute(sql.as_str(), params![&pinned, &name])
+            .log_err_msg("Failed to update audio row pin by name")
+            .map_err(|err| PoiseError::from(err))?;
+
+        Ok(())
+    }
+
     pub fn delete_audio_row(&self, col: impl AsRef<UniqueAudioTableCol>) -> Result<(), PoiseError> {
         let column = col.as_ref();
         match self.find_audio_row(&col) {
@@ -370,7 +519,11 @@ impl Table for AudioTable {
                     created_at VARCHAR(25) NOT NULL,
                     author_id INTEGER,
                     author_name VARCHAR(256),
-                    author_global_name VARCHAR(256)
+                    author_global_name VARCHAR(256),
+                    play_count INTEGER DEFAULT 0,
+                    last_played_at VARCHAR(25) DEFAULT NULL,
+                    popularity REAL DEFAULT 0,
+                    pinned BOOLEAN DEFAULT FALSE
                 );
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts5_table_name} USING FTS5(
@@ -409,17 +562,28 @@ impl Table for AudioTable {
 #[allow(unused)]
 #[derive(Debug)]
 pub enum AudioTableOrderBy {
-    CreatedAt,
-    Id,
-    Name,
+    CreatedAt(Order),
+    Id(Order),
+    Name(Order),
+    PlayCount(Order),
 }
 
 impl AudioTableOrderBy {
-    pub fn col_name(&self) -> String {
-        match &self {
-            Self::CreatedAt => "created_at".into(),
-            Self::Id => "id".into(),
-            Self::Name => "name".into(),
+    pub fn to_sql_str(&self) -> String {
+        match self {
+            Self::CreatedAt(order) => format!("created_at {order}"),
+            Self::Id(order) => format!("id {order}"),
+            Self::Name(order) => format!("name {order}"),
+            Self::PlayCount(order) => format!("play_count {order}"),
+        }
+    }
+
+    pub fn inverse_order(&self) -> Self {
+        match self {
+            Self::CreatedAt(order) => Self::CreatedAt(order.inverse()),
+            Self::Id(order) => Self::Id(order.inverse()),
+            Self::Name(order) => Self::Name(order.inverse()),
+            Self::PlayCount(order) => Self::PlayCount(order.inverse()),
         }
     }
 }
@@ -443,17 +607,14 @@ mod tests {
     }
 
     fn make_audio_table_row_insert() -> AudioTableRowInsert {
-        AudioTableRowInsert {
-            audio_file: AudioFile::new(
-                std::path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
-            ),
-            author_global_name: None,
-            name: format!("{}{}", uuid_v4_str(), "#!@#$%^&*()_-+=?/.\"\\'"),
-            tags: uuid_v4_str().into(),
-            created_at: chrono::Utc::now(),
-            author_id: None,
-            author_name: None,
-        }
+        let name = format!("{}{}", uuid_v4_str(), "#!@#$%^&*()_-+=?/.\"\\'");
+        let audio_file = AudioFile::new(
+            std::path::Path::new(&format!("/tmp/{}.mp3", helpers::uuid_v4_str())).to_path_buf(),
+        );
+
+        AudioTableRowInsertBuilder::new(name, audio_file)
+            .tags(uuid_v4_str())
+            .build()
     }
 
     #[test]

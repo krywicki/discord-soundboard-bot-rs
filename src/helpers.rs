@@ -42,9 +42,42 @@ pub fn poise_check_msg(result: Result<poise::ReplyHandle, serenity::Error>) {
     }
 }
 
+pub async fn is_bot_alone_in_voice_channel(
+    ctx: &Context,
+    guild_id: GuildId,
+) -> Result<bool, PoiseError> {
+    if let Some(bot_voice_channel_id) = get_bot_voice_channel_id(ctx, guild_id).await {
+        if let Some(guild) = ctx.cache.guild(guild_id) {
+            if let Some(channel) = guild.channels.get(&bot_voice_channel_id) {
+                let members = channel.members(&ctx)?;
+                return Ok(members.len() == 1 && members[0].user.id == ctx.cache.current_user().id);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+pub async fn get_bot_voice_channel_id(ctx: &Context, guild_id: GuildId) -> Option<ChannelId> {
+    let user = ctx.cache.current_user();
+    let bot_id = user.id;
+
+    // Get the guild from the cache
+    let guild = ctx.cache.guild(guild_id)?;
+
+    // Get the voice states for the guild
+    let voice_state = guild.voice_states.get(&bot_id)?;
+
+    voice_state.channel_id
+}
+
 #[derive(Debug)]
 pub enum ButtonCustomId {
     PlayAudio(i64),
+    DisplayPinned,
+    DisplayAll,
+    DisplayMostPlayed,
+    DisplayRecentlyAdded,
     Unknown(String),
 }
 
@@ -54,13 +87,17 @@ impl TryFrom<String> for ButtonCustomId {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let parts: Vec<_> = value.split("::").collect();
         match parts[0] {
-            "play" => {
+            "sound_bot_play" => {
                 let id: i64 = parts[1]
                     .parse()
                     .map_err(|e: ParseIntError| e.to_string())
                     .log_err_op(|e| format!("Parse error on button custom id '{value}' - {e}"))?;
                 Ok(ButtonCustomId::PlayAudio(id))
             }
+            "sound_bot_display_pinned" => Ok(ButtonCustomId::DisplayPinned),
+            "sound_bot_display_all" => Ok(ButtonCustomId::DisplayAll),
+            "sound_bot_display_most_played" => Ok(ButtonCustomId::DisplayMostPlayed),
+            "sound_bot_display_recently_added" => Ok(ButtonCustomId::DisplayRecentlyAdded),
             _ => Ok(ButtonCustomId::Unknown(value)),
         }
     }
@@ -69,7 +106,11 @@ impl TryFrom<String> for ButtonCustomId {
 impl From<ButtonCustomId> for String {
     fn from(value: ButtonCustomId) -> Self {
         match value {
-            ButtonCustomId::PlayAudio(val) => format!("play::{val}"),
+            ButtonCustomId::PlayAudio(val) => format!("sound_bot_play::{val}"),
+            ButtonCustomId::DisplayPinned => format!("sound_bot_display_pinned"),
+            ButtonCustomId::DisplayAll => format!("sound_bot_display_all"),
+            ButtonCustomId::DisplayMostPlayed => format!("sound_bot_display_most_played"),
+            ButtonCustomId::DisplayRecentlyAdded => format!("sound_bot_display_recently_added"),
             ButtonCustomId::Unknown(val) => format!("{val}"),
         }
     }
@@ -225,12 +266,36 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
     let buttons: Vec<_> = audio_rows
         .iter()
         .map(|track| {
+            let style = if track.pinned {
+                serenity::all::ButtonStyle::Success
+            } else {
+                serenity::all::ButtonStyle::Primary
+            };
+
             CreateButton::new(ButtonCustomId::PlayAudio(track.id))
                 .label(track.name.to_button_label())
+                .style(style)
         })
         .collect();
 
     CreateActionRow::Buttons(buttons)
+}
+
+pub fn make_display_buttons() -> CreateActionRow {
+    CreateActionRow::Buttons(vec![
+        CreateButton::new(ButtonCustomId::DisplayAll)
+            .label("Display All".to_string())
+            .style(serenity::all::ButtonStyle::Secondary),
+        CreateButton::new(ButtonCustomId::DisplayPinned)
+            .label("Display Pinned".to_string())
+            .style(serenity::all::ButtonStyle::Secondary),
+        CreateButton::new(ButtonCustomId::DisplayMostPlayed)
+            .label("Display Most Played".to_string())
+            .style(serenity::all::ButtonStyle::Secondary),
+        CreateButton::new(ButtonCustomId::DisplayRecentlyAdded)
+            .label("Display Recently Added".to_string())
+            .style(serenity::all::ButtonStyle::Secondary),
+    ])
 }
 
 pub async fn autocomplete_audio_track_name<'a>(
