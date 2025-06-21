@@ -457,7 +457,8 @@ pub mod button_handlers {
             .build();
 
         for audio_rows in paginator {
-            let audio_rows = audio_rows.log_err()?;
+            let mut audio_rows = audio_rows.log_err()?;
+            audio_rows.reverse();
 
             // ActionRows: Have a 5x5 grid limit
             // (https://discordjs.guide/message-components/action-rows.html#action-rows)
