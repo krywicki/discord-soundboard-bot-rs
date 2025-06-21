@@ -495,6 +495,23 @@ impl AudioTable {
         }
         Ok(())
     }
+
+    pub fn get_random_row(&self) -> Result<Option<AudioTableRow>, String> {
+        log::info!("Getting random audio row");
+
+        let table_name = Self::TABLE_NAME;
+        let sql = format!("SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT 1");
+
+        let result = self
+            .conn
+            .query_one(sql.as_str(), [], |row| AudioTableRow::try_from(row));
+
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
 }
 
 impl Table for AudioTable {

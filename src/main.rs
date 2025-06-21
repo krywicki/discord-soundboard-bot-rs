@@ -261,6 +261,10 @@ async fn handle_btn_interaction(
             )
             .await?;
         }
+        ButtonCustomId::PlayRandom => {
+            button_handlers::handle_play_random_btn(ctx, interaction, component, framework, data)
+                .await?;
+        }
         ButtonCustomId::DisplayAll => {
             button_handlers::handle_display_all_btn(ctx, interaction, component, framework, data)
                 .await?;
@@ -372,11 +376,12 @@ pub mod button_handlers {
             .page_limit(vars::ACTION_ROWS_LIMIT)
             .build();
 
-        let markdown_content = "## Displaying All Sounds...";
-
         check_msg(
             channel_id
-                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new().content("## Displaying All Sounds..."),
+                )
                 .await,
         );
 
@@ -389,6 +394,17 @@ pub mod button_handlers {
             let builder = CreateMessage::new().components(btn_grid);
             check_msg(channel_id.send_message(&ctx.http(), builder).await);
         }
+
+        check_msg(
+            channel_id
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new()
+                        .content("### Sound Options")
+                        .components(vec![helpers::make_display_buttons()]),
+                )
+                .await,
+        );
 
         Ok(())
     }
@@ -404,11 +420,12 @@ pub mod button_handlers {
 
         let channel_id = component.channel_id;
 
-        let markdown_content = "## Displaying Pinned Sounds...";
-
         check_msg(
             channel_id
-                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new().content("## Displaying Pinned Sounds..."),
+                )
                 .await,
         );
 
@@ -428,6 +445,17 @@ pub mod button_handlers {
             check_msg(channel_id.send_message(&ctx.http(), builder).await);
         }
 
+        check_msg(
+            channel_id
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new()
+                        .content("### Sound Options")
+                        .components(vec![helpers::make_display_buttons()]),
+                )
+                .await,
+        );
+
         Ok(())
     }
 
@@ -442,11 +470,12 @@ pub mod button_handlers {
 
         let channel_id = component.channel_id;
 
-        let markdown_content = "## Displaying Recently Added Sounds...";
-
         check_msg(
             channel_id
-                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new().content("## Displaying Recently Added Sounds..."),
+                )
                 .await,
         );
 
@@ -467,6 +496,17 @@ pub mod button_handlers {
             check_msg(channel_id.send_message(&ctx.http(), builder).await);
         }
 
+        check_msg(
+            channel_id
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new()
+                        .content("### Sound Options")
+                        .components(vec![helpers::make_display_buttons()]),
+                )
+                .await,
+        );
+
         Ok(())
     }
 
@@ -480,12 +520,13 @@ pub mod button_handlers {
         log::info!("Displaying most played sounds buttons as ActionRows grid...");
 
         let channel_id = component.channel_id;
-        let markdown_content = "## Displaying Most Played Sounds...\n\
-            **Most recent goes from bottom to top**";
 
         check_msg(
             channel_id
-                .send_message(&ctx.http(), CreateMessage::new().content(markdown_content))
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new().content("## Displaying Most Played Sounds..."),
+                )
                 .await,
         );
 
@@ -503,6 +544,70 @@ pub mod button_handlers {
             let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
             let builder = CreateMessage::new().components(btn_grid);
             check_msg(channel_id.send_message(&ctx.http(), builder).await);
+        }
+
+        check_msg(
+            channel_id
+                .send_message(
+                    &ctx.http(),
+                    CreateMessage::new()
+                        .content("### Sound Options")
+                        .components(vec![helpers::make_display_buttons()]),
+                )
+                .await,
+        );
+
+        Ok(())
+    }
+
+    pub async fn handle_play_random_btn(
+        ctx: &Context,
+        _interaction: &Interaction,
+        component: &ComponentInteraction,
+        _framework: FrameworkContext<'_>,
+        data: &UserData,
+    ) -> PoiseResult {
+        log::info!("Play Random Button Pressed");
+
+        let channel_id = component.channel_id;
+        let guild_id = component
+            .guild_id
+            .ok_or("ComponentInteraction.guild_id is None")
+            .log_err()?;
+        let table = AudioTable::new(data.db_connection());
+        let audio_row = table.get_random_row()?;
+
+        match audio_row {
+            Some(audio_row) => {
+                let track_name = audio_row.name;
+
+                check_msg(
+                    channel_id
+                        .send_message(
+                            &ctx.http(),
+                            CreateMessage::new()
+                                .content(format!("### Playing `{track_name}`..."))
+                                .components(vec![helpers::make_display_buttons()]),
+                        )
+                        .await,
+                );
+
+                let manager = helpers::songbird_get(&ctx).await;
+                manager
+                    .play_audio(guild_id, channel_id, &audio_row.audio_file)
+                    .await
+                    .ok();
+            }
+            None => check_msg(
+                channel_id
+                    .send_message(
+                        &ctx.http(),
+                        CreateMessage::new()
+                            .content("No sounds present to play")
+                            .components(vec![helpers::make_display_buttons()]),
+                    )
+                    .await,
+            ),
         }
 
         Ok(())

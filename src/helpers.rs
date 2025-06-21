@@ -1,7 +1,7 @@
 use std::num::ParseIntError;
 use std::sync::Arc;
 
-use serenity::all::{ChannelId, CreateActionRow, CreateButton, GuildId};
+use serenity::all::{ChannelId, CreateActionRow, CreateButton, GuildId, ReactionType};
 use serenity::async_trait;
 use serenity::{all::Message, client::Context, Result as SerenityResult};
 use songbird::tracks::TrackHandle;
@@ -74,6 +74,7 @@ pub async fn get_bot_voice_channel_id(ctx: &Context, guild_id: GuildId) -> Optio
 #[derive(Debug)]
 pub enum ButtonCustomId {
     PlayAudio(i64),
+    PlayRandom,
     DisplayPinned,
     DisplayAll,
     DisplayMostPlayed,
@@ -94,6 +95,7 @@ impl TryFrom<String> for ButtonCustomId {
                     .log_err_op(|e| format!("Parse error on button custom id '{value}' - {e}"))?;
                 Ok(ButtonCustomId::PlayAudio(id))
             }
+            "sound_bot_play_random" => Ok(ButtonCustomId::PlayRandom),
             "sound_bot_display_pinned" => Ok(ButtonCustomId::DisplayPinned),
             "sound_bot_display_all" => Ok(ButtonCustomId::DisplayAll),
             "sound_bot_display_most_played" => Ok(ButtonCustomId::DisplayMostPlayed),
@@ -107,6 +109,7 @@ impl From<ButtonCustomId> for String {
     fn from(value: ButtonCustomId) -> Self {
         match value {
             ButtonCustomId::PlayAudio(val) => format!("sound_bot_play::{val}"),
+            ButtonCustomId::PlayRandom => format!("sound_bot_play_random"),
             ButtonCustomId::DisplayPinned => format!("sound_bot_display_pinned"),
             ButtonCustomId::DisplayAll => format!("sound_bot_display_all"),
             ButtonCustomId::DisplayMostPlayed => format!("sound_bot_display_most_played"),
@@ -285,15 +288,23 @@ pub fn make_display_buttons() -> CreateActionRow {
     CreateActionRow::Buttons(vec![
         CreateButton::new(ButtonCustomId::DisplayAll)
             .label("Display All".to_string())
+            .emoji(ReactionType::Unicode("🎶".into()))
             .style(serenity::all::ButtonStyle::Secondary),
         CreateButton::new(ButtonCustomId::DisplayPinned)
             .label("Display Pinned".to_string())
+            .emoji(ReactionType::Unicode("🎶".into()))
             .style(serenity::all::ButtonStyle::Secondary),
         CreateButton::new(ButtonCustomId::DisplayMostPlayed)
             .label("Display Most Played".to_string())
+            .emoji(ReactionType::Unicode("🎶".into()))
             .style(serenity::all::ButtonStyle::Secondary),
         CreateButton::new(ButtonCustomId::DisplayRecentlyAdded)
             .label("Display Recently Added".to_string())
+            .emoji(ReactionType::Unicode("🎶".into()))
+            .style(serenity::all::ButtonStyle::Secondary),
+        CreateButton::new(ButtonCustomId::PlayRandom)
+            .label("Play Random".to_string())
+            .emoji(ReactionType::Unicode("🎶".into()))
             .style(serenity::all::ButtonStyle::Secondary),
     ])
 }
