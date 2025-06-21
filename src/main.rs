@@ -480,7 +480,8 @@ pub mod button_handlers {
         log::info!("Displaying most played sounds buttons as ActionRows grid...");
 
         let channel_id = component.channel_id;
-        let markdown_content = "## Displaying Most Played Sounds...";
+        let markdown_content = "## Displaying Most Played Sounds...\n\
+            **Most recent goes from bottom to top**";
 
         check_msg(
             channel_id
