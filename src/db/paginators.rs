@@ -14,6 +14,7 @@ pub struct AudioTablePaginator {
     fts_filter: Option<String>,
     pinned: Option<bool>,
     limit: Option<u64>, // Limit for the total number of rows to fetch
+    reverse: bool, // Whether to reverse the order of the results (impacted by order_by and pagination)
 }
 
 impl AudioTablePaginator {
@@ -60,7 +61,7 @@ impl AudioTablePaginator {
             format!("WHERE {}", where_sql.join(" AND "))
         };
 
-        let sql = match fts_filter {
+        let mut sql = match fts_filter {
             Some(fts_filter) => {
                 params.insert(0, fts_filter);
 
@@ -72,7 +73,7 @@ impl AudioTablePaginator {
                     {where_sql}
                     ORDER BY {order_by_sql}
                     LIMIT {page_limit}
-                    OFFSET {offset};"
+                    OFFSET {offset}"
                 )
             }
             None => {
@@ -81,10 +82,20 @@ impl AudioTablePaginator {
                     {where_sql}
                     ORDER BY {order_by_sql}
                     LIMIT {page_limit}
-                    OFFSET {offset};"
+                    OFFSET {offset}"
                 )
             }
         };
+
+        // reverse results correctly for pagination
+        if self.reverse {
+            sql = format!(
+                "SELECT * FROM ({sql}) ORDER BY {};",
+                self.order_by.inverse_order().to_sql_str()
+            );
+        } else {
+            sql = format!("{};", sql);
+        }
 
         let mut stmt = conn
             .prepare(sql.as_ref())
@@ -125,6 +136,7 @@ impl AudioTablePaginatorBuilder {
                 pinned: None,
                 offset: 0,
                 limit: None,
+                reverse: false, // Default to not reversed
             },
         }
     }
@@ -152,6 +164,14 @@ impl AudioTablePaginatorBuilder {
 
     pub fn limit(mut self, value: Option<u64>) -> Self {
         self.paginator.limit = value;
+        self
+    }
+
+    /// Set whether to reverse the order of the results.
+    /// This is useful in pagination if you want to display results in reverse order
+    /// based on the current order_by setting.
+    pub fn reverse(mut self, value: bool) -> Self {
+        self.paginator.reverse = value;
         self
     }
 
@@ -286,6 +306,49 @@ mod tests {
             let page = paginator.next();
             assert!(page.is_none());
         }
+    }
+
+    #[test]
+    fn audio_table_pagination_reverse_test() {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        let table = AudioTable::new(db_pool.get().unwrap());
+        table.create_table();
+
+        let mut row = make_audio_table_row_insert();
+        row.name = "first".into();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = "second".into();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = "third".into();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = "fourth".into();
+        table.insert_audio_row(row).unwrap();
+
+        let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            .page_limit(2)
+            .order_by(AudioTableOrderBy::Id(db::Order::Desc))
+            .reverse(true)
+            .build();
+
+        let page = paginator.next().unwrap().unwrap();
+        assert_eq!(page.len(), 2);
+
+        assert_eq!(page[0].name, "third");
+        assert_eq!(page[1].name, "fourth");
+
+        let page = paginator.next().unwrap().unwrap();
+        assert_eq!(page[0].name, "first");
+        assert_eq!(page[1].name, "second");
+
+        let page = paginator.next();
+        assert!(page.is_none());
     }
 
     #[test]

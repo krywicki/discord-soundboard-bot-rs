@@ -454,11 +454,11 @@ pub mod button_handlers {
             .page_limit(vars::ACTION_ROWS_LIMIT)
             .limit(Some(data.config.max_display_recently_added))
             .order_by(AudioTableOrderBy::CreatedAt(db::Order::Desc))
+            .reverse(true)
             .build();
 
         for audio_rows in paginator {
-            let mut audio_rows = audio_rows.log_err()?;
-            audio_rows.reverse();
+            let audio_rows = audio_rows.log_err()?;
 
             // ActionRows: Have a 5x5 grid limit
             // (https://discordjs.guide/message-components/action-rows.html#action-rows)

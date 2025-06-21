@@ -21,6 +21,15 @@ pub enum Order {
     Desc,
 }
 
+impl Order {
+    pub fn inverse(&self) -> Self {
+        match self {
+            Order::Asc => Order::Desc,
+            Order::Desc => Order::Asc,
+        }
+    }
+}
+
 impl From<Order> for String {
     fn from(order: Order) -> Self {
         order.into()
