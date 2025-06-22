@@ -1,16 +1,9 @@
 //#![allow(warnings)]
-use commands::PoiseResult;
-use common::LogResult;
-use db::{AudioTable, SettingsTable, Table};
 use env_logger;
 use log;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Client as HttpClient;
-use serenity::all::{
-    ApplicationId, ComponentInteraction, ComponentInteractionDataKind, CreateInteractionResponse,
-    FullEvent, Interaction, VoiceState,
-};
-use serenity::client::Context;
+use serenity::all::ApplicationId;
 
 use serenity::{
     client::Client,
@@ -32,8 +25,6 @@ mod vars;
 use crate::commands::PoiseError;
 use crate::common::UserData;
 use crate::config::Config;
-use crate::helpers::SongbirdHelper;
-use crate::helpers::{ButtonCustomId, DisplayMenuItemCustomId};
 
 type FrameworkContext<'a> = poise::FrameworkContext<'a, UserData, PoiseError>;
 
@@ -74,7 +65,6 @@ async fn main() -> anyhow::Result<()> {
             })
             .setup(|_ctx, _ready, _framework| {
                 Box::pin(async move {
-                    //poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                     Ok(UserData {
                         config: config,
                         db_pool: db_pool,

@@ -1,12 +1,23 @@
-use serenity::all::{CacheHttp, CreateInteractionResponseMessage, CreateMessage, CreateQuickModal};
-
-use crate::{
-    db::{audio_table::AudioTableOrderBy, paginators::AudioTablePaginatorBuilder},
-    helpers::{check_msg, make_soundbot_controls},
-    vars::ACTION_ROWS_LIMIT,
+use serenity::all::{
+    CacheHttp, ComponentInteraction, ComponentInteractionDataKind, Context,
+    CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage, CreateQuickModal,
+    FullEvent, Interaction, VoiceState,
 };
 
-use super::*;
+use crate::{
+    commands::PoiseResult,
+    common::{LogResult, UserData},
+    db::{
+        self, audio_table::AudioTableOrderBy, paginators::AudioTablePaginatorBuilder, AudioTable,
+        SettingsTable, Table,
+    },
+    helpers::{
+        self, check_msg, make_soundbot_controls, ButtonCustomId, DisplayMenuItemCustomId,
+        SongbirdHelper,
+    },
+    vars::{self, ACTION_ROWS_LIMIT},
+    FrameworkContext,
+};
 
 pub async fn event_handler(
     ctx: &Context,
@@ -137,22 +148,14 @@ pub async fn handle_btn_interaction(
 
     match ButtonCustomId::try_from(custom_id)? {
         ButtonCustomId::PlayAudio(audio_track_id) => {
-            event_handlers::handle_play_audio_btn(
-                ctx,
-                interaction,
-                component,
-                framework,
-                data,
-                audio_track_id,
-            )
-            .await?;
-        }
-        ButtonCustomId::PlayRandom => {
-            event_handlers::handle_play_random_btn(ctx, interaction, component, framework, data)
+            handle_play_audio_btn(ctx, interaction, component, framework, data, audio_track_id)
                 .await?;
         }
+        ButtonCustomId::PlayRandom => {
+            handle_play_random_btn(ctx, interaction, component, framework, data).await?;
+        }
         ButtonCustomId::Search => {
-            event_handlers::handle_search_btn(ctx, interaction, component, framework, data).await?;
+            handle_search_btn(ctx, interaction, component, framework, data).await?;
         }
         ButtonCustomId::Unknown(value) => {
             return Err(format!(
@@ -185,15 +188,8 @@ pub async fn handle_string_select_interaction(
 
     match custom_id.as_str() {
         DisplayMenuItemCustomId::CUSTOM_ID => {
-            event_handlers::handle_display_select_menu(
-                ctx,
-                interaction,
-                component,
-                framework,
-                data,
-                &values,
-            )
-            .await?;
+            handle_display_select_menu(ctx, interaction, component, framework, data, &values)
+                .await?;
         }
         val => {
             log::warn!("string select interaction custom_id({val}) not handled");
