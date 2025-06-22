@@ -251,6 +251,12 @@ pub async fn handle_play_audio_btn(
 ) -> PoiseResult {
     log::info!("Play Audio Button Pressed - '{audio_track_id}'");
 
+    component
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await
+        .log_err_msg("Failed to create response for btn interaction")
+        .ok();
+
     let channel_id = component.channel_id;
     let guild_id = component
         .guild_id

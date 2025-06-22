@@ -22,6 +22,68 @@ impl AudioTablePaginator {
         AudioTablePaginatorBuilder::new(conn)
     }
 
+    pub fn row_count(&self) -> Result<i64, String> {
+        let conn = &self.conn;
+        let audio_table_name = AudioTable::TABLE_NAME;
+        let fts_table_name = AudioTable::FTS5_TABLE_NAME;
+        let fts_filter = self.fts_filter.as_ref();
+        let mut where_sql: Vec<String> = vec![];
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![];
+
+        let limit_sql = if let Some(limit) = self.limit {
+            format!("LIMIT {limit}")
+        } else {
+            String::new()
+        };
+
+        if let Some(pinned) = self.pinned.as_ref() {
+            where_sql.push("pinned = ?".into());
+            params.push(pinned);
+        }
+
+        let where_sql = if where_sql.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_sql.join(" AND "))
+        };
+
+        let sql = match fts_filter {
+            Some(fts_filter) => {
+                params.insert(0, fts_filter);
+
+                // fts filtering
+                format!(
+                    "SELECT Audio.id FROM {audio_table_name} Audio
+                    INNER JOIN {fts_table_name}(?) FTS
+                        ON Audio.id = FTS.rowid
+                    {where_sql}
+                    {limit_sql}
+                    "
+                )
+            }
+            None => {
+                format!(
+                    "SELECT id FROM {audio_table_name}
+                    {where_sql}
+                    {limit_sql}
+                    "
+                )
+            }
+        };
+
+        let sql = format!("SELECT COUNT(id) FROM ({sql});");
+
+        let mut stmt = conn
+            .prepare(sql.as_ref())
+            .expect("Failed to prepare sql stmt");
+
+        let count: i64 = stmt
+            .query_row(params.as_slice(), |row| row.get(0))
+            .map_err(|err| format!("Error counting in AudioTablePaginator - {err}"))?;
+
+        Ok(count)
+    }
+
     pub fn next_page(&mut self) -> Result<Vec<AudioTableRow>, String> {
         let conn = &self.conn;
         let audio_table_name = AudioTable::TABLE_NAME;
@@ -264,6 +326,8 @@ mod tests {
             .page_limit(2)
             .build();
 
+        assert_eq!(paginator.row_count().unwrap(), 3);
+
         let page = paginator.next().unwrap().unwrap();
         assert_eq!(page.len(), 2);
 
@@ -294,6 +358,8 @@ mod tests {
                 .limit(Some(2))
                 .build();
 
+            assert_eq!(paginator.row_count().unwrap(), 2);
+
             let page = paginator.next().unwrap().unwrap();
             assert_eq!(page.len(), 1);
 
@@ -310,6 +376,8 @@ mod tests {
                 .page_limit(5)
                 .limit(Some(3))
                 .build();
+
+            assert_eq!(paginator.row_count().unwrap(), 3);
 
             let page = paginator.next().unwrap().unwrap();
             assert_eq!(page.len(), 3);
@@ -360,6 +428,8 @@ mod tests {
                 .reverse(true)
                 .build();
 
+            assert_eq!(paginator.row_count().unwrap(), 4);
+
             let page = paginator.next().unwrap().unwrap();
             assert_eq!(page.len(), 2);
 
@@ -383,6 +453,8 @@ mod tests {
                 .reverse(true)
                 .fts_filter(Some("tag1".into()))
                 .build();
+
+            assert_eq!(paginator.row_count().unwrap(), 3);
 
             let page = paginator.next().unwrap().unwrap();
             assert_eq!(page.len(), 2);
@@ -428,6 +500,8 @@ mod tests {
             .page_limit(2)
             .fts_filter(Some("star".into()))
             .build();
+
+        assert_eq!(paginator.row_count().unwrap(), 2);
 
         let page = paginator.next().unwrap().unwrap();
         assert_eq!(page.len(), 2);
