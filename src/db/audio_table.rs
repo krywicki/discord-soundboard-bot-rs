@@ -20,8 +20,11 @@ pub struct AudioTableRow {
     pub author_name: Option<String>,
     #[allow(dead_code)]
     pub author_global_name: Option<String>,
+    #[allow(dead_code)]
     pub play_count: i64,
+    #[allow(dead_code)]
     pub last_played_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[allow(dead_code)]
     pub popularity: f64,
     pub pinned: bool,
 }

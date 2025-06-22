@@ -50,19 +50,6 @@ impl TrackHandleHelper for TrackHandle {
 
 pub struct AudioDir(path::PathBuf);
 
-impl AudioDir {
-    pub fn new(dir_path: path::PathBuf) -> Self {
-        if !dir_path.is_dir() {
-            panic!(
-                "Audio directory path is not a directory: {}",
-                dir_path.to_str().unwrap_or("")
-            );
-        }
-
-        Self(dir_path)
-    }
-}
-
 impl IntoIterator for AudioDir {
     type Item = AudioFile;
     type IntoIter = AudioDirIter;
@@ -88,10 +75,6 @@ impl Default for AudioFileValidator {
 }
 
 impl AudioFileValidator {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn max_audio_duration(mut self, max_duration: std::time::Duration) -> Self {
         self.max_dur = max_duration;
         self
@@ -174,21 +157,6 @@ impl AudioFile {
     pub fn as_path_buf(&self) -> path::PathBuf {
         self.0.clone()
     }
-
-    /// get file name without file extension
-    pub fn file_stem(&self) -> String {
-        self.0
-            .file_stem()
-            .unwrap_or(&OsStr::new(""))
-            .to_string_lossy()
-            .into()
-    }
-
-    pub fn audio_title(&self) -> String {
-        let stem = self.file_stem();
-        let stem = stem.replace("_", " ").replace("-", " ");
-        helpers::title_case(stem)
-    }
 }
 
 impl Deref for AudioFile {
@@ -223,18 +191,6 @@ impl ToSql for AudioFile {
         let p = self.to_str().unwrap_or("");
         let value = rusqlite::types::ValueRef::Text(p.as_bytes());
         Ok(rusqlite::types::ToSqlOutput::Borrowed(value))
-    }
-}
-
-pub trait RemoveAudioFile {
-    fn remove_audio_file(&mut self, audio_file: &AudioFile);
-}
-
-impl RemoveAudioFile for Vec<AudioFile> {
-    fn remove_audio_file(&mut self, audio_file: &AudioFile) {
-        if let Some(index) = self.iter().position(|f| f == audio_file) {
-            self.remove(index);
-        }
     }
 }
 

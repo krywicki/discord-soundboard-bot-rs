@@ -1,7 +1,10 @@
 use std::num::ParseIntError;
 use std::sync::Arc;
 
-use serenity::all::{ChannelId, CreateActionRow, CreateButton, GuildId, ReactionType};
+use serenity::all::{
+    ChannelId, CreateActionRow, CreateButton, CreateMessage, CreateSelectMenuOption, GuildId,
+    ReactionType,
+};
 use serenity::async_trait;
 use serenity::{all::Message, client::Context, Result as SerenityResult};
 use songbird::tracks::TrackHandle;
@@ -72,20 +75,68 @@ pub async fn get_bot_voice_channel_id(ctx: &Context, guild_id: GuildId) -> Optio
 }
 
 #[derive(Debug)]
-pub enum ButtonCustomId {
-    PlayAudio(i64),
-    PlayRandom,
-    DisplayPinned,
+pub enum DisplayMenuItemCustomId {
     DisplayAll,
+    DisplayPinned,
     DisplayMostPlayed,
     DisplayRecentlyAdded,
     Unknown(String),
 }
 
-impl TryFrom<String> for ButtonCustomId {
+impl DisplayMenuItemCustomId {
+    pub const CUSTOM_ID: &'static str = "sound_bot_display_menu";
+}
+
+impl From<&String> for DisplayMenuItemCustomId {
+    fn from(value: &String) -> Self {
+        match value.as_str() {
+            "sound_bot_display_menu_item_pinned" => Self::DisplayPinned,
+            "sound_bot_display_menu_item_all" => Self::DisplayAll,
+            "sound_bot_display_menu_item_most_played" => Self::DisplayMostPlayed,
+            "sound_bot_display_menu_item_recently_added" => Self::DisplayRecentlyAdded,
+            _ => Self::Unknown(value.clone()),
+        }
+    }
+}
+
+impl From<String> for DisplayMenuItemCustomId {
+    fn from(value: String) -> Self {
+        DisplayMenuItemCustomId::from(&value)
+    }
+}
+
+impl From<DisplayMenuItemCustomId> for String {
+    fn from(value: DisplayMenuItemCustomId) -> Self {
+        match value {
+            DisplayMenuItemCustomId::DisplayPinned => format!("sound_bot_display_menu_item_pinned"),
+            DisplayMenuItemCustomId::DisplayAll => format!("sound_bot_display_menu_item_all"),
+            DisplayMenuItemCustomId::DisplayMostPlayed => {
+                format!("sound_bot_display_menu_item_most_played")
+            }
+            DisplayMenuItemCustomId::DisplayRecentlyAdded => {
+                format!("sound_bot_display_menu_item_recently_added")
+            }
+            DisplayMenuItemCustomId::Unknown(val) => val,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ButtonCustomId {
+    PlayAudio(i64),
+    PlayRandom,
+    // DisplayPinned,
+    // DisplayAll,
+    // DisplayMostPlayed,
+    // DisplayRecentlyAdded,
+    Search,
+    Unknown(String),
+}
+
+impl TryFrom<&String> for ButtonCustomId {
     type Error = String;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
+    fn try_from(value: &String) -> Result<Self, Self::Error> {
         let parts: Vec<_> = value.split("::").collect();
         match parts[0] {
             "sound_bot_play" => {
@@ -96,12 +147,21 @@ impl TryFrom<String> for ButtonCustomId {
                 Ok(ButtonCustomId::PlayAudio(id))
             }
             "sound_bot_play_random" => Ok(ButtonCustomId::PlayRandom),
-            "sound_bot_display_pinned" => Ok(ButtonCustomId::DisplayPinned),
-            "sound_bot_display_all" => Ok(ButtonCustomId::DisplayAll),
-            "sound_bot_display_most_played" => Ok(ButtonCustomId::DisplayMostPlayed),
-            "sound_bot_display_recently_added" => Ok(ButtonCustomId::DisplayRecentlyAdded),
-            _ => Ok(ButtonCustomId::Unknown(value)),
+            // "sound_bot_display_pinned" => Ok(ButtonCustomId::DisplayPinned),
+            // "sound_bot_display_all" => Ok(ButtonCustomId::DisplayAll),
+            // "sound_bot_display_most_played" => Ok(ButtonCustomId::DisplayMostPlayed),
+            // "sound_bot_display_recently_added" => Ok(ButtonCustomId::DisplayRecentlyAdded),
+            "sound_bot_search" => Ok(ButtonCustomId::Search),
+            _ => Ok(ButtonCustomId::Unknown(value.clone())),
         }
+    }
+}
+
+impl TryFrom<String> for ButtonCustomId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        ButtonCustomId::try_from(&value)
     }
 }
 
@@ -110,11 +170,12 @@ impl From<ButtonCustomId> for String {
         match value {
             ButtonCustomId::PlayAudio(val) => format!("sound_bot_play::{val}"),
             ButtonCustomId::PlayRandom => format!("sound_bot_play_random"),
-            ButtonCustomId::DisplayPinned => format!("sound_bot_display_pinned"),
-            ButtonCustomId::DisplayAll => format!("sound_bot_display_all"),
-            ButtonCustomId::DisplayMostPlayed => format!("sound_bot_display_most_played"),
-            ButtonCustomId::DisplayRecentlyAdded => format!("sound_bot_display_recently_added"),
-            ButtonCustomId::Unknown(val) => format!("{val}"),
+            // ButtonCustomId::DisplayPinned => format!("sound_bot_display_pinned"),
+            // ButtonCustomId::DisplayAll => format!("sound_bot_display_all"),
+            // ButtonCustomId::DisplayMostPlayed => format!("sound_bot_display_most_played"),
+            // ButtonCustomId::DisplayRecentlyAdded => format!("sound_bot_display_recently_added"),
+            ButtonCustomId::Search => format!("sound_bot_search"),
+            ButtonCustomId::Unknown(val) => val,
         }
     }
 }
@@ -284,29 +345,52 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
     CreateActionRow::Buttons(buttons)
 }
 
-pub fn make_display_buttons() -> CreateActionRow {
-    CreateActionRow::Buttons(vec![
-        CreateButton::new(ButtonCustomId::DisplayAll)
-            .label("Display All".to_string())
-            .emoji(ReactionType::Unicode("🎶".into()))
-            .style(serenity::all::ButtonStyle::Secondary),
-        CreateButton::new(ButtonCustomId::DisplayPinned)
-            .label("Display Pinned".to_string())
-            .emoji(ReactionType::Unicode("🎶".into()))
-            .style(serenity::all::ButtonStyle::Secondary),
-        CreateButton::new(ButtonCustomId::DisplayMostPlayed)
-            .label("Display Most Played".to_string())
-            .emoji(ReactionType::Unicode("🎶".into()))
-            .style(serenity::all::ButtonStyle::Secondary),
-        CreateButton::new(ButtonCustomId::DisplayRecentlyAdded)
-            .label("Display Recently Added".to_string())
-            .emoji(ReactionType::Unicode("🎶".into()))
-            .style(serenity::all::ButtonStyle::Secondary),
-        CreateButton::new(ButtonCustomId::PlayRandom)
-            .label("Play Random".to_string())
-            .emoji(ReactionType::Unicode("🎶".into()))
-            .style(serenity::all::ButtonStyle::Secondary),
-    ])
+pub fn make_soundbot_control_components() -> Vec<CreateActionRow> {
+    vec![
+        CreateActionRow::Buttons(vec![
+            CreateButton::new(ButtonCustomId::Search)
+                .label("Search".to_string())
+                .emoji(ReactionType::Unicode("🔍".into()))
+                .style(serenity::all::ButtonStyle::Secondary),
+            CreateButton::new(ButtonCustomId::PlayRandom)
+                .label("Play Random".to_string())
+                .emoji(ReactionType::Unicode("🎵".into()))
+                .style(serenity::all::ButtonStyle::Secondary),
+        ]),
+        CreateActionRow::SelectMenu(
+            serenity::builder::CreateSelectMenu::new(
+                DisplayMenuItemCustomId::CUSTOM_ID,
+                serenity::builder::CreateSelectMenuKind::String {
+                    options: vec![
+                        CreateSelectMenuOption::new("All", DisplayMenuItemCustomId::DisplayAll)
+                            .emoji(ReactionType::Unicode("📋".into())),
+                        CreateSelectMenuOption::new(
+                            "Pinned",
+                            DisplayMenuItemCustomId::DisplayPinned,
+                        )
+                        .emoji(ReactionType::Unicode("📋".into())),
+                        CreateSelectMenuOption::new(
+                            "Recently Added",
+                            DisplayMenuItemCustomId::DisplayRecentlyAdded,
+                        )
+                        .emoji(ReactionType::Unicode("📋".into())),
+                        CreateSelectMenuOption::new(
+                            "Most Played",
+                            DisplayMenuItemCustomId::DisplayMostPlayed,
+                        )
+                        .emoji(ReactionType::Unicode("📋".into())),
+                    ],
+                },
+            )
+            .placeholder("Display Sounds"),
+        ),
+    ]
+}
+
+pub fn make_soundbot_controls() -> CreateMessage {
+    CreateMessage::new()
+        .content("**Soundbot Controls**")
+        .components(make_soundbot_control_components())
 }
 
 pub async fn autocomplete_audio_track_name<'a>(
@@ -334,31 +418,4 @@ pub fn uuid_v4_str() -> String {
     let uuid = uuid::Uuid::new_v4();
     let mut encode_buf = uuid::Uuid::encode_buffer();
     uuid.hyphenated().encode_lower(&mut encode_buf).to_string()
-}
-
-pub fn title_case(s: impl AsRef<str>) -> String {
-    s.as_ref()
-        .split_whitespace()
-        .into_iter()
-        .map(|s| {
-            let mut it = s.chars();
-            match it.next() {
-                Some(c) => c.to_uppercase().to_string() + it.collect::<String>().as_str(),
-                None => s.to_owned(),
-            }
-        })
-        .collect::<Vec<String>>()
-        .join(" ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn title_case_test() {
-        assert_eq!("This Is A Title", title_case("this is a title"));
-        assert_eq!("This Is_a-title", title_case("this is_a-title"));
-        assert_eq!("This Is A Title", title_case("this is\ta\t\ttitle"));
-    }
 }

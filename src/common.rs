@@ -1,6 +1,6 @@
 use std::path;
 
-use crate::audio::{AudioDir, AudioFile};
+use crate::audio::AudioFile;
 use crate::commands::PoiseError;
 use crate::config::Config;
 use crate::db::{AudioTable, DbConnection, SettingsTable};
@@ -11,10 +11,6 @@ pub struct UserData {
 }
 
 impl UserData {
-    pub fn read_audio_dir(&self) -> AudioDir {
-        read_audio_dir(&self.config.audio_dir)
-    }
-
     pub fn db_connection(&self) -> DbConnection {
         self.db_pool
             .get()
@@ -77,11 +73,6 @@ impl UserData {
             }
         }
     }
-}
-
-pub fn read_audio_dir(dir: &path::PathBuf) -> AudioDir {
-    log::debug!("read_audio_dir: {}", dir.to_string_lossy());
-    AudioDir::new(dir.clone())
 }
 
 pub trait LogResult<T, E> {
@@ -154,6 +145,16 @@ where
         }
         self
     }
+}
+
+#[derive(Debug, poise::Modal)]
+#[name = "Search Sound"]
+pub struct SearchSoundModal {
+    #[name = "Search"] // Field name by default
+    #[placeholder = "star wars anakin"] // No placeholder by default
+    #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
+    #[max_length = 80] // Same as max button label len (crate::vars::BTN_LABEL_MAX_LEN)
+    name: String,
 }
 
 #[cfg(test)]

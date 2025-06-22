@@ -1,11 +1,11 @@
-use poise::Modal;
+use poise::{CreateReply, Modal};
 use serenity::{all::CreateMessage, async_trait};
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
-    audio::{self, AudioFile, RemoveAudioFile},
+    audio,
     common::{LogResult, UserData},
-    db::{self, audio_table::AudioTableRowInsertBuilder, AudioTable, Tags},
+    db::{self, audio_table::AudioTableRowInsertBuilder, Tags},
     helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
     vars,
 };
@@ -177,56 +177,6 @@ pub async fn sounds(_ctx: PoiseContext<'_>) -> PoiseResult {
     Ok(())
 }
 
-#[poise::command(prefix_command, guild_only)]
-pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
-    log::info!("Scanning audio files...");
-
-    let audio_validator = audio::AudioFileValidator::new()
-        .max_audio_duration(ctx.data().config.max_audio_file_duration);
-
-    let mut audio_files: Vec<AudioFile> = ctx
-        .data()
-        .read_audio_dir()
-        .into_iter()
-        .filter(|f| audio_validator.validate(f.as_path()).is_ok())
-        .collect();
-
-    let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection()).build();
-
-    // ignore audio files already in database
-    for page in paginator {
-        let page = page.log_err()?;
-        for row in page {
-            audio_files.remove_audio_file(&row.audio_file);
-        }
-    }
-
-    // add remaining audio files not in database
-    log::info!(
-        "Scan found {} audio files to add to databse",
-        audio_files.len()
-    );
-
-    let mut inserted = 0;
-    let table = AudioTable::new(ctx.data().db_connection());
-    for audio_file in audio_files {
-        let new_audio =
-            AudioTableRowInsertBuilder::new(audio_file.audio_title(), audio_file).build();
-
-        table
-            .insert_audio_row(new_audio)
-            .log_err()
-            .and_then(|_| {
-                inserted += 1;
-                Ok(())
-            })
-            .ok();
-    }
-
-    log::info!("Scan complete - added {inserted} new audio files");
-    Ok(())
-}
-
 #[poise::command(slash_command, prefix_command, guild_only)]
 pub async fn echo(
     ctx: PoiseContext<'_>,
@@ -385,7 +335,7 @@ pub async fn display_sounds(
     ctx: PoiseContext<'_>,
     #[description = "Filter displayed sounds by names & tags"] search: Option<String>,
 ) -> PoiseResult {
-    log::info!("List sounds buttons as ActionRows grid...");
+    log::info!("`/sounds display` slash command received");
 
     match search.as_ref() {
         Some(value) => {
@@ -410,14 +360,13 @@ pub async fn display_sounds(
             }
         }
         None => {
-            poise_check_msg(ctx.reply("Displaying sounds...").await);
-            let markdown_content = "## Sound Display Options";
+            let reply = ctx.reply_builder(
+                CreateReply::default()
+                    .content("**Soundbot Controls**")
+                    .components(helpers::make_soundbot_control_components()),
+            );
 
-            let builder = CreateMessage::new()
-                .content(markdown_content)
-                .components(vec![helpers::make_display_buttons()]);
-
-            check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
+            poise_check_msg(ctx.send(reply).await);
         }
     }
 
