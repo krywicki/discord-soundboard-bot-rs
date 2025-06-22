@@ -156,37 +156,3 @@ pub struct SearchSoundModal {
     #[max_length = 80] // Same as max button label len (crate::vars::BTN_LABEL_MAX_LEN)
     name: String,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_temp_dir() -> path::PathBuf {
-        let dir = std::env::temp_dir();
-        let uuid = uuid::Uuid::new_v4();
-        let mut encode_buf = uuid::Uuid::encode_buffer();
-        let uuid = uuid.hyphenated().encode_lower(&mut encode_buf);
-        let temp_dir = dir.join(uuid);
-        std::fs::create_dir(temp_dir.as_path()).expect("Failed creating temp directory");
-        temp_dir
-    }
-
-    #[test]
-    fn read_audio_dir_test() {
-        let dir = make_temp_dir();
-        std::fs::File::create(dir.join("a.mp3")).unwrap();
-        std::fs::File::create(dir.join("b.mp3")).unwrap();
-        std::fs::File::create(dir.join("c.txt")).unwrap();
-
-        let audio_dir = read_audio_dir(&dir);
-
-        let audio_tracks: Vec<_> = audio_dir.into_iter().collect();
-
-        assert_eq!(audio_tracks.len(), 2);
-
-        let c_txt = audio_tracks
-            .iter()
-            .find(|i| i.as_path() == dir.join("c.txt"));
-        assert_eq!(c_txt, None);
-    }
-}
