@@ -17,12 +17,46 @@ pub struct AudioTablePaginator {
     reverse: bool, // Whether to reverse the order of the results (impacted by order_by and pagination)
 }
 
+pub struct PaginateInfo {
+    pub prev_page_offset: Option<u64>,
+    pub next_page_offset: Option<u64>,
+    pub total_pages: u64,
+    pub cur_page: u64,
+    pub total_row_count: u64,
+    pub page_limit: u64,
+}
+
 impl AudioTablePaginator {
     pub fn builder(conn: DbConnection) -> AudioTablePaginatorBuilder {
         AudioTablePaginatorBuilder::new(conn)
     }
 
-    pub fn row_count(&self) -> Result<i64, String> {
+    pub fn pageinate_info(&self) -> Result<PaginateInfo, String> {
+        let row_count = self.row_count()?;
+
+        let prev_page_offset = if (self.offset as i64 - self.page_limit as i64) < 0 {
+            None
+        } else {
+            Some(self.offset - self.page_limit)
+        };
+
+        let next_page_offset = if (self.offset + self.page_limit) >= row_count {
+            None
+        } else {
+            Some(self.offset + self.page_limit)
+        };
+
+        Ok(PaginateInfo {
+            prev_page_offset: prev_page_offset,
+            next_page_offset: next_page_offset,
+            total_pages: (row_count / self.page_limit),
+            cur_page: (self.offset / self.page_limit) + 1,
+            total_row_count: row_count,
+            page_limit: self.page_limit,
+        })
+    }
+
+    pub fn row_count(&self) -> Result<u64, String> {
         let conn = &self.conn;
         let audio_table_name = AudioTable::TABLE_NAME;
         let fts_table_name = AudioTable::FTS5_TABLE_NAME;
@@ -77,7 +111,7 @@ impl AudioTablePaginator {
             .prepare(sql.as_ref())
             .expect("Failed to prepare sql stmt");
 
-        let count: i64 = stmt
+        let count: u64 = stmt
             .query_row(params.as_slice(), |row| row.get(0))
             .map_err(|err| format!("Error counting in AudioTablePaginator - {err}"))?;
 
@@ -214,6 +248,35 @@ impl AudioTablePaginatorBuilder {
         }
     }
 
+    pub fn most_recently_added_template(conn: DbConnection) -> Self {
+        Self::new(conn)
+            .order_by(AudioTableOrderBy::CreatedAt(db::Order::Desc))
+            .page_limit(20)
+    }
+
+    pub fn most_played_template(conn: DbConnection) -> Self {
+        Self::new(conn)
+            .order_by(AudioTableOrderBy::PlayCount(db::Order::Desc))
+            .page_limit(20)
+    }
+
+    pub fn search_template(conn: DbConnection, fts_filter: impl AsRef<str>) -> Self {
+        let fts_filter = fts_filter.as_ref();
+        Self::new(conn)
+            .fts_filter(Some(fts_filter.into()))
+            .page_limit(20)
+    }
+
+    pub fn all_template(conn: DbConnection) -> Self {
+        Self::new(conn).page_limit(20)
+    }
+
+    pub fn pinned_template(conn: DbConnection) -> Self {
+        Self::new(conn)
+            .pinned(Some(true))
+            .order_by(AudioTableOrderBy::Name(db::Order::Asc))
+    }
+
     #[allow(unused)]
     pub fn order_by(mut self, value: AudioTableOrderBy) -> Self {
         self.paginator.order_by = value;
@@ -237,6 +300,11 @@ impl AudioTablePaginatorBuilder {
 
     pub fn limit(mut self, value: Option<u64>) -> Self {
         self.paginator.limit = value;
+        self
+    }
+
+    pub fn offset(mut self, value: u64) -> Self {
+        self.paginator.offset = value;
         self
     }
 
@@ -507,6 +575,53 @@ mod tests {
         assert_eq!(page.len(), 2);
         assert_eq!(page[0].name, "star wars obi wan");
         assert_eq!(page[1].name, "han solo");
+
+        let page = paginator.next();
+        assert!(page.is_none());
+    }
+
+    #[test]
+    fn audio_table_offset_test() {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        let table = AudioTable::new(db_pool.get().unwrap());
+        table.create_table();
+
+        let mut row = make_audio_table_row_insert();
+        row.name = "first".into();
+        row.tags = "tag1".into();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = "second".into();
+        row.tags = "tag2".into();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = "third".into();
+        row.tags = "tag1".into();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = "fourth".into();
+        row.tags = "tag2".into();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = "fifth".into();
+        row.tags = "tag1".into();
+        table.insert_audio_row(row).unwrap();
+
+        let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            .fts_filter(Some("tag1".into()))
+            .offset(3)
+            .build();
+
+        assert_eq!(paginator.row_count().unwrap(), 1);
+
+        let page = paginator.next().unwrap().unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].name, "fifth");
 
         let page = paginator.next();
         assert!(page.is_none());

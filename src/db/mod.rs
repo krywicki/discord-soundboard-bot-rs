@@ -5,7 +5,7 @@ pub mod settings_table;
 use core::fmt;
 
 pub use audio_table::{AudioTable, AudioTableRow, Tags, UniqueAudioTableCol};
-pub use paginators::AudioTablePaginator;
+pub use paginators::{AudioTablePaginator, AudioTablePaginatorBuilder};
 pub use settings_table::SettingsTable;
 
 pub type DbConnection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>;

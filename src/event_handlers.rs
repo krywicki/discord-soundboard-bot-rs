@@ -1,21 +1,17 @@
 use serenity::all::{
-    CacheHttp, ComponentInteraction, ComponentInteractionDataKind, Context,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage, CreateQuickModal,
-    FullEvent, Interaction, VoiceState,
+    CacheHttp, ComponentInteraction, ComponentInteractionDataKind, Context, CreateActionRow,
+    CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
+    CreateQuickModal, FullEvent, Interaction, ReactionType, VoiceState,
 };
 
 use crate::{
     commands::PoiseResult,
     common::{LogResult, UserData},
-    db::{
-        self, audio_table::AudioTableOrderBy, paginators::AudioTablePaginatorBuilder, AudioTable,
-        SettingsTable, Table,
-    },
+    db::{self, paginators::AudioTablePaginatorBuilder, AudioTable, SettingsTable, Table},
     helpers::{
-        self, check_msg, make_soundbot_controls, ButtonCustomId, DisplayMenuItemCustomId,
-        SongbirdHelper,
+        self, check_msg, ButtonCustomId, DisplayMenuItemCustomId, PaginateId, SongbirdHelper,
     },
-    vars::{self, ACTION_ROWS_LIMIT},
+    vars::ACTION_ROWS_LIMIT,
     FrameworkContext,
 };
 
@@ -146,7 +142,8 @@ pub async fn handle_btn_interaction(
     log::debug!("Interaction Component Button pressed");
     let custom_id = &component.data.custom_id;
 
-    match ButtonCustomId::try_from(custom_id)? {
+    let button_id = ButtonCustomId::try_from(custom_id)?;
+    match button_id {
         ButtonCustomId::PlayAudio(audio_track_id) => {
             handle_play_audio_btn(ctx, interaction, component, framework, data, audio_track_id)
                 .await?;
@@ -156,6 +153,10 @@ pub async fn handle_btn_interaction(
         }
         ButtonCustomId::Search => {
             handle_search_btn(ctx, interaction, component, framework, data).await?;
+        }
+
+        ButtonCustomId::Paginate(val) => {
+            handle_paginate_btn(ctx, interaction, component, framework, data, val).await?;
         }
         ButtonCustomId::Unknown(value) => {
             return Err(format!(
@@ -180,18 +181,17 @@ pub async fn handle_string_select_interaction(
     log::debug!("Interaction Component string select");
     let custom_id = &component.data.custom_id;
 
-    component
-        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
-        .await
-        .log_err_msg("Failed to create response for btn interaction")
-        .ok();
-
     match custom_id.as_str() {
         DisplayMenuItemCustomId::CUSTOM_ID => {
             handle_display_select_menu(ctx, interaction, component, framework, data, &values)
                 .await?;
         }
         val => {
+            component
+                .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+                .await
+                .log_err_msg("Failed to create response for btn interaction")
+                .ok();
             log::warn!("string select interaction custom_id({val}) not handled");
         }
     }
@@ -289,6 +289,126 @@ pub async fn handle_play_audio_btn(
     Ok(())
 }
 
+pub async fn handle_paginate_btn(
+    ctx: &Context,
+    _interaction: &Interaction,
+    component: &ComponentInteraction,
+    _framework: FrameworkContext<'_>,
+    data: &UserData,
+    button_id: PaginateId,
+) -> PoiseResult {
+    log::info!("paginate {button_id:?}");
+    let conn = data.db_connection();
+
+    let (mut paginator, content, paginate_btns) = match button_id {
+        PaginateId::AllPrevPage(offset) | PaginateId::AllNextPage(offset) => {
+            let paginator = db::AudioTablePaginatorBuilder::all_template(conn)
+                .page_limit(data.config.max_page_size)
+                .offset(offset)
+                .build();
+
+            let paginate_info = paginator.pageinate_info()?;
+            let content =
+                helpers::make_display_title(helpers::PaginateType::All, &paginate_info, None);
+            let paginate_btns =
+                helpers::make_paginate_controls(helpers::PaginateType::All, &paginate_info, None);
+
+            (paginator, content, paginate_btns)
+        }
+        PaginateId::MostPlayedNextPage(offset) | PaginateId::MostPlayedPrevPage(offset) => {
+            let paginator = db::AudioTablePaginatorBuilder::most_played_template(conn)
+                .page_limit(data.config.max_page_size)
+                .offset(offset)
+                .build();
+
+            let paginate_info = paginator.pageinate_info()?;
+            let content = helpers::make_display_title(
+                helpers::PaginateType::MostPlayed,
+                &paginate_info,
+                None,
+            );
+
+            let paginate_btns = helpers::make_paginate_controls(
+                helpers::PaginateType::MostPlayed,
+                &paginate_info,
+                None,
+            );
+
+            (paginator, content, paginate_btns)
+        }
+        PaginateId::RecentlyAddedNextPage(offset) | PaginateId::RecentlyAddedPrevPage(offset) => {
+            let paginator = db::AudioTablePaginatorBuilder::most_recently_added_template(conn)
+                .page_limit(data.config.max_page_size)
+                .offset(offset)
+                .build();
+
+            let paginate_info = paginator.pageinate_info()?;
+            let content = helpers::make_display_title(
+                helpers::PaginateType::RecentlyAdded,
+                &paginate_info,
+                None,
+            );
+
+            let paginate_btns = helpers::make_paginate_controls(
+                helpers::PaginateType::RecentlyAdded,
+                &paginate_info,
+                None,
+            );
+
+            (paginator, content, paginate_btns)
+        }
+        PaginateId::SearchNextPage(offset, ref search)
+        | PaginateId::SearchPrevPage(offset, ref search) => {
+            let paginator = db::AudioTablePaginatorBuilder::search_template(conn, search)
+                .page_limit(data.config.max_page_size)
+                .offset(offset)
+                .build();
+
+            let paginate_info = paginator.pageinate_info()?;
+            let content = helpers::make_display_title(
+                helpers::PaginateType::Search,
+                &paginate_info,
+                Some(search.clone()),
+            );
+
+            let paginate_btns = helpers::make_paginate_controls(
+                helpers::PaginateType::Search,
+                &paginate_info,
+                Some(search.clone()),
+            );
+
+            (paginator, content, paginate_btns)
+        }
+        PaginateId::Unknown(val) => {
+            return Err(format!(
+                "Unrecognized button custom_id for component interaction. Value={val}"
+            )
+            .into())
+            .log_err();
+        }
+    };
+
+    let mut action_rows: Vec<_> = paginator
+        .next_page()?
+        .chunks(5)
+        .map(helpers::make_action_row)
+        .collect();
+    action_rows.push(paginate_btns);
+
+    component
+        .create_response(
+            &ctx.http(),
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .components(action_rows),
+            ),
+        )
+        .await?;
+
+    Ok(())
+}
+
 pub async fn handle_display_all_menu_select(
     ctx: &Context,
     _interaction: &Interaction,
@@ -297,38 +417,34 @@ pub async fn handle_display_all_menu_select(
     data: &UserData,
 ) -> PoiseResult {
     log::info!("Displaying all sounds buttons as ActionRows grid...");
-
-    let channel_id = component.channel_id;
-
-    let paginator = db::AudioTablePaginator::builder(data.db_connection())
-        .order_by(AudioTableOrderBy::CreatedAt(db::Order::Desc))
-        .page_limit(vars::ACTION_ROWS_LIMIT)
+    let mut paginator = db::AudioTablePaginatorBuilder::all_template(data.db_connection())
+        .page_limit(data.config.max_page_size)
         .build();
 
-    check_msg(
-        channel_id
-            .send_message(
-                &ctx.http(),
-                CreateMessage::new().content("## Displaying All Sounds..."),
-            )
-            .await,
-    );
+    let paginate_info = paginator.pageinate_info()?;
+    let content = helpers::make_display_title(helpers::PaginateType::All, &paginate_info, None);
+    let paginate_ctrls =
+        helpers::make_paginate_controls(helpers::PaginateType::All, &paginate_info, None);
 
-    for audio_rows in paginator {
-        let audio_rows = audio_rows.log_err()?;
+    let mut btn_grid: Vec<_> = paginator
+        .next_page()?
+        .chunks(5)
+        .map(helpers::make_action_row)
+        .collect();
 
-        // ActionRows: Have a 5x5 grid limit
-        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-        let builder = CreateMessage::new().components(btn_grid);
-        check_msg(channel_id.send_message(&ctx.http(), builder).await);
-    }
+    btn_grid.push(paginate_ctrls);
 
-    check_msg(
-        channel_id
-            .send_message(&ctx.http(), helpers::make_soundbot_controls())
-            .await,
-    );
+    component
+        .create_response(
+            &ctx.http(),
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .components(btn_grid),
+            ),
+        )
+        .await
+        .log_err()?;
 
     Ok(())
 }
@@ -342,38 +458,33 @@ pub async fn handle_display_pinned_menu_select(
 ) -> PoiseResult {
     log::info!("Displaying pinned sounds buttons as ActionRows grid...");
 
-    let channel_id = component.channel_id;
-
-    check_msg(
-        channel_id
-            .send_message(
-                &ctx.http(),
-                CreateMessage::new().content("## Displaying Pinned Sounds..."),
-            )
-            .await,
-    );
-
-    let paginator = db::AudioTablePaginator::builder(data.db_connection())
-        .page_limit(vars::ACTION_ROWS_LIMIT)
-        .pinned(Some(true))
-        .order_by(AudioTableOrderBy::Name(db::Order::Asc))
+    let mut paginator = db::AudioTablePaginatorBuilder::pinned_template(data.db_connection())
+        .page_limit(data.config.max_page_size)
         .build();
 
-    for audio_rows in paginator {
-        let audio_rows = audio_rows.log_err()?;
+    let paginate_info = paginator.pageinate_info()?;
+    let content = helpers::make_display_title(helpers::PaginateType::Pinned, &paginate_info, None);
+    let paginate_ctrls =
+        helpers::make_paginate_controls(helpers::PaginateType::Pinned, &paginate_info, None);
+    let mut btn_grid: Vec<_> = paginator
+        .next_page()?
+        .chunks(5)
+        .map(helpers::make_action_row)
+        .collect();
 
-        // ActionRows: Have a 5x5 grid limit
-        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-        let builder = CreateMessage::new().components(btn_grid);
-        check_msg(channel_id.send_message(&ctx.http(), builder).await);
-    }
+    btn_grid.push(paginate_ctrls);
 
-    check_msg(
-        channel_id
-            .send_message(&ctx.http(), make_soundbot_controls())
-            .await,
-    );
+    component
+        .create_response(
+            &ctx.http(),
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .components(btn_grid),
+            ),
+        )
+        .await
+        .log_err()?;
 
     Ok(())
 }
@@ -387,39 +498,35 @@ pub async fn handle_display_recently_added_menu_select(
 ) -> PoiseResult {
     log::info!("Displaying recently added sounds buttons as ActionRows grid...");
 
-    let channel_id = component.channel_id;
+    let mut paginator =
+        db::AudioTablePaginatorBuilder::most_recently_added_template(data.db_connection())
+            .page_limit(data.config.max_page_size)
+            .build();
 
-    check_msg(
-        channel_id
-            .send_message(
-                &ctx.http(),
-                CreateMessage::new().content("## Displaying Recently Added Sounds..."),
-            )
-            .await,
-    );
+    let paginate_info = paginator.pageinate_info()?;
+    let content =
+        helpers::make_display_title(helpers::PaginateType::RecentlyAdded, &paginate_info, None);
+    let paginate_ctrls =
+        helpers::make_paginate_controls(helpers::PaginateType::RecentlyAdded, &paginate_info, None);
+    let mut btn_grid: Vec<_> = paginator
+        .next_page()?
+        .chunks(5)
+        .map(helpers::make_action_row)
+        .collect();
 
-    let paginator = db::AudioTablePaginator::builder(data.db_connection())
-        .page_limit(vars::ACTION_ROWS_LIMIT)
-        .limit(Some(data.config.max_display_recently_added))
-        .order_by(AudioTableOrderBy::CreatedAt(db::Order::Desc))
-        .reverse(true)
-        .build();
+    btn_grid.push(paginate_ctrls);
 
-    for audio_rows in paginator {
-        let audio_rows = audio_rows.log_err()?;
-
-        // ActionRows: Have a 5x5 grid limit
-        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-        let builder = CreateMessage::new().components(btn_grid);
-        check_msg(channel_id.send_message(&ctx.http(), builder).await);
-    }
-
-    check_msg(
-        channel_id
-            .send_message(&ctx.http(), make_soundbot_controls())
-            .await,
-    );
+    component
+        .create_response(
+            &ctx.http(),
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .components(btn_grid),
+            ),
+        )
+        .await
+        .log_err()?;
 
     Ok(())
 }
@@ -433,38 +540,34 @@ pub async fn handle_display_most_played_menu_select(
 ) -> PoiseResult {
     log::info!("Displaying most played sounds buttons as ActionRows grid...");
 
-    let channel_id = component.channel_id;
-
-    check_msg(
-        channel_id
-            .send_message(
-                &ctx.http(),
-                CreateMessage::new().content("## Displaying Most Played Sounds..."),
-            )
-            .await,
-    );
-
-    let paginator = db::AudioTablePaginator::builder(data.db_connection())
-        .page_limit(vars::ACTION_ROWS_LIMIT)
-        .limit(Some(data.config.max_display_most_played))
-        .order_by(AudioTableOrderBy::PlayCount(db::Order::Desc))
+    let mut paginator = db::AudioTablePaginatorBuilder::most_played_template(data.db_connection())
+        .page_limit(data.config.max_page_size)
         .build();
 
-    for audio_rows in paginator {
-        let audio_rows = audio_rows.log_err()?;
+    let paginate_info = paginator.pageinate_info()?;
+    let content =
+        helpers::make_display_title(helpers::PaginateType::MostPlayed, &paginate_info, None);
+    let paginate_ctrls =
+        helpers::make_paginate_controls(helpers::PaginateType::MostPlayed, &paginate_info, None);
+    let mut btn_grid: Vec<_> = paginator
+        .next_page()?
+        .chunks(5)
+        .map(helpers::make_action_row)
+        .collect();
 
-        // ActionRows: Have a 5x5 grid limit
-        // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-        let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-        let builder = CreateMessage::new().components(btn_grid);
-        check_msg(channel_id.send_message(&ctx.http(), builder).await);
-    }
+    btn_grid.push(paginate_ctrls);
 
-    check_msg(
-        channel_id
-            .send_message(&ctx.http(), helpers::make_soundbot_controls())
-            .await,
-    );
+    component
+        .create_response(
+            &ctx.http(),
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .components(btn_grid),
+            ),
+        )
+        .await
+        .log_err()?;
 
     Ok(())
 }
@@ -562,6 +665,42 @@ pub async fn handle_search_btn(
         let search = &inputs[0];
         let search = search.trim();
 
+        let mut paginator = db::AudioTablePaginatorBuilder::pinned_template(data.db_connection())
+            .page_limit(data.config.max_page_size)
+            .build();
+
+        let paginate_info = paginator.pageinate_info()?;
+        let content = helpers::make_display_title(
+            helpers::PaginateType::Search,
+            &paginate_info,
+            Some(search.into()),
+        );
+        let paginate_ctrls = helpers::make_paginate_controls(
+            helpers::PaginateType::Search,
+            &paginate_info,
+            Some(search.into()),
+        );
+        let mut btn_grid: Vec<_> = paginator
+            .next_page()?
+            .chunks(5)
+            .map(helpers::make_action_row)
+            .collect();
+
+        btn_grid.push(paginate_ctrls);
+
+        component
+            .create_response(
+                &ctx.http(),
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(content)
+                        .components(btn_grid),
+                ),
+            )
+            .await
+            .log_err()?;
+
+        //
         let paginator = AudioTablePaginatorBuilder::new(data.db_connection())
             .fts_filter(Some(search.into()))
             .page_limit(ACTION_ROWS_LIMIT)
@@ -587,13 +726,8 @@ pub async fn handle_search_btn(
         }
     } else {
         log::error!("Handle search button quick modal response was empty");
+        return Ok(());
     }
-
-    check_msg(
-        channel_id
-            .send_message(&ctx.http(), make_soundbot_controls())
-            .await,
-    );
 
     Ok(())
 }
