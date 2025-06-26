@@ -1,17 +1,14 @@
 use serenity::all::{
-    CacheHttp, ComponentInteraction, ComponentInteractionDataKind, Context, CreateActionRow,
-    CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
-    CreateQuickModal, FullEvent, Interaction, ReactionType, VoiceState,
+    CacheHttp, ComponentInteraction, ComponentInteractionDataKind, Context,
+    CreateInteractionResponse, CreateInteractionResponseMessage, CreateQuickModal, FullEvent,
+    Interaction, VoiceState,
 };
 
 use crate::{
     commands::PoiseResult,
     common::{LogResult, UserData},
-    db::{self, paginators::AudioTablePaginatorBuilder, AudioTable, SettingsTable, Table},
-    helpers::{
-        self, check_msg, ButtonCustomId, DisplayMenuItemCustomId, PaginateId, SongbirdHelper,
-    },
-    vars::ACTION_ROWS_LIMIT,
+    db::{self, AudioTable, SettingsTable, Table},
+    helpers::{self, ButtonCustomId, DisplayMenuItemCustomId, PaginateId, SongbirdHelper},
     FrameworkContext,
 };
 
@@ -300,84 +297,70 @@ pub async fn handle_paginate_btn(
     log::info!("paginate {button_id:?}");
     let conn = data.db_connection();
 
-    let (mut paginator, content, paginate_btns) = match button_id {
-        PaginateId::AllPrevPage(offset) | PaginateId::AllNextPage(offset) => {
-            let paginator = db::AudioTablePaginatorBuilder::all_template(conn)
+    let response_msg = match button_id {
+        PaginateId::AllFirstPage(offset)
+        | PaginateId::AllLastPage(offset)
+        | PaginateId::AllPrevPage(offset)
+        | PaginateId::AllNextPage(offset) => {
+            let mut paginator = db::AudioTablePaginatorBuilder::all_template(conn)
                 .page_limit(data.config.max_page_size)
                 .offset(offset)
                 .build();
 
-            let paginate_info = paginator.pageinate_info()?;
-            let content =
-                helpers::make_display_title(helpers::PaginateType::All, &paginate_info, None);
-            let paginate_btns =
-                helpers::make_paginate_controls(helpers::PaginateType::All, &paginate_info, None);
-
-            (paginator, content, paginate_btns)
+            helpers::make_display_message(&mut paginator, helpers::DisplayType::All, None)
+                .log_err()?
         }
-        PaginateId::MostPlayedNextPage(offset) | PaginateId::MostPlayedPrevPage(offset) => {
-            let paginator = db::AudioTablePaginatorBuilder::most_played_template(conn)
+        PaginateId::MostPlayedFirstPage(offset)
+        | PaginateId::MostPlayedLastPage(offset)
+        | PaginateId::MostPlayedNextPage(offset)
+        | PaginateId::MostPlayedPrevPage(offset) => {
+            let mut paginator = db::AudioTablePaginatorBuilder::most_played_template(conn)
                 .page_limit(data.config.max_page_size)
                 .offset(offset)
                 .build();
 
-            let paginate_info = paginator.pageinate_info()?;
-            let content = helpers::make_display_title(
-                helpers::PaginateType::MostPlayed,
-                &paginate_info,
-                None,
-            );
-
-            let paginate_btns = helpers::make_paginate_controls(
-                helpers::PaginateType::MostPlayed,
-                &paginate_info,
-                None,
-            );
-
-            (paginator, content, paginate_btns)
+            helpers::make_display_message(&mut paginator, helpers::DisplayType::MostPlayed, None)
+                .log_err()?
         }
-        PaginateId::RecentlyAddedNextPage(offset) | PaginateId::RecentlyAddedPrevPage(offset) => {
-            let paginator = db::AudioTablePaginatorBuilder::most_recently_added_template(conn)
+        PaginateId::RecentlyAddedFirstPage(offset)
+        | PaginateId::RecentlyAddedLastPage(offset)
+        | PaginateId::RecentlyAddedNextPage(offset)
+        | PaginateId::RecentlyAddedPrevPage(offset) => {
+            let mut paginator = db::AudioTablePaginatorBuilder::most_recently_added_template(conn)
                 .page_limit(data.config.max_page_size)
                 .offset(offset)
                 .build();
 
-            let paginate_info = paginator.pageinate_info()?;
-            let content = helpers::make_display_title(
-                helpers::PaginateType::RecentlyAdded,
-                &paginate_info,
-                None,
-            );
-
-            let paginate_btns = helpers::make_paginate_controls(
-                helpers::PaginateType::RecentlyAdded,
-                &paginate_info,
-                None,
-            );
-
-            (paginator, content, paginate_btns)
+            helpers::make_display_message(&mut paginator, helpers::DisplayType::RecentlyAdded, None)
+                .log_err()?
         }
-        PaginateId::SearchNextPage(offset, ref search)
+        PaginateId::SearchFirstPage(offset, ref search)
+        | PaginateId::SearchLastPage(offset, ref search)
+        | PaginateId::SearchNextPage(offset, ref search)
         | PaginateId::SearchPrevPage(offset, ref search) => {
-            let paginator = db::AudioTablePaginatorBuilder::search_template(conn, search)
+            let mut paginator = db::AudioTablePaginatorBuilder::search_template(conn, search)
                 .page_limit(data.config.max_page_size)
                 .offset(offset)
                 .build();
 
-            let paginate_info = paginator.pageinate_info()?;
-            let content = helpers::make_display_title(
-                helpers::PaginateType::Search,
-                &paginate_info,
+            helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::Search,
                 Some(search.clone()),
-            );
+            )
+            .log_err()?
+        }
+        PaginateId::PinnedFirstPage(offset)
+        | PaginateId::PinnedLastPage(offset)
+        | PaginateId::PinnedNextPage(offset)
+        | PaginateId::PinnedPrevPage(offset) => {
+            let mut paginator = db::AudioTablePaginatorBuilder::pinned_template(conn)
+                .page_limit(data.config.max_page_size)
+                .offset(offset)
+                .build();
 
-            let paginate_btns = helpers::make_paginate_controls(
-                helpers::PaginateType::Search,
-                &paginate_info,
-                Some(search.clone()),
-            );
-
-            (paginator, content, paginate_btns)
+            helpers::make_display_message(&mut paginator, helpers::DisplayType::Pinned, None)
+                .log_err()?
         }
         PaginateId::Unknown(val) => {
             return Err(format!(
@@ -388,21 +371,10 @@ pub async fn handle_paginate_btn(
         }
     };
 
-    let mut action_rows: Vec<_> = paginator
-        .next_page()?
-        .chunks(5)
-        .map(helpers::make_action_row)
-        .collect();
-    action_rows.push(paginate_btns);
-
     component
         .create_response(
             &ctx.http(),
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .content(content)
-                    .components(action_rows),
-            ),
+            CreateInteractionResponse::UpdateMessage(response_msg.into()),
         )
         .await?;
 
@@ -421,27 +393,13 @@ pub async fn handle_display_all_menu_select(
         .page_limit(data.config.max_page_size)
         .build();
 
-    let paginate_info = paginator.pageinate_info()?;
-    let content = helpers::make_display_title(helpers::PaginateType::All, &paginate_info, None);
-    let paginate_ctrls =
-        helpers::make_paginate_controls(helpers::PaginateType::All, &paginate_info, None);
-
-    let mut btn_grid: Vec<_> = paginator
-        .next_page()?
-        .chunks(5)
-        .map(helpers::make_action_row)
-        .collect();
-
-    btn_grid.push(paginate_ctrls);
+    let response_msg =
+        helpers::make_display_message(&mut paginator, helpers::DisplayType::All, None).log_err()?;
 
     component
         .create_response(
             &ctx.http(),
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(content)
-                    .components(btn_grid),
-            ),
+            CreateInteractionResponse::Message(response_msg.into()),
         )
         .await
         .log_err()?;
@@ -462,26 +420,14 @@ pub async fn handle_display_pinned_menu_select(
         .page_limit(data.config.max_page_size)
         .build();
 
-    let paginate_info = paginator.pageinate_info()?;
-    let content = helpers::make_display_title(helpers::PaginateType::Pinned, &paginate_info, None);
-    let paginate_ctrls =
-        helpers::make_paginate_controls(helpers::PaginateType::Pinned, &paginate_info, None);
-    let mut btn_grid: Vec<_> = paginator
-        .next_page()?
-        .chunks(5)
-        .map(helpers::make_action_row)
-        .collect();
-
-    btn_grid.push(paginate_ctrls);
+    let response_msg =
+        helpers::make_display_message(&mut paginator, helpers::DisplayType::Pinned, None)
+            .log_err()?;
 
     component
         .create_response(
             &ctx.http(),
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(content)
-                    .components(btn_grid),
-            ),
+            CreateInteractionResponse::Message(response_msg.into()),
         )
         .await
         .log_err()?;
@@ -503,27 +449,14 @@ pub async fn handle_display_recently_added_menu_select(
             .page_limit(data.config.max_page_size)
             .build();
 
-    let paginate_info = paginator.pageinate_info()?;
-    let content =
-        helpers::make_display_title(helpers::PaginateType::RecentlyAdded, &paginate_info, None);
-    let paginate_ctrls =
-        helpers::make_paginate_controls(helpers::PaginateType::RecentlyAdded, &paginate_info, None);
-    let mut btn_grid: Vec<_> = paginator
-        .next_page()?
-        .chunks(5)
-        .map(helpers::make_action_row)
-        .collect();
-
-    btn_grid.push(paginate_ctrls);
+    let response_msg =
+        helpers::make_display_message(&mut paginator, helpers::DisplayType::RecentlyAdded, None)
+            .log_err()?;
 
     component
         .create_response(
             &ctx.http(),
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(content)
-                    .components(btn_grid),
-            ),
+            CreateInteractionResponse::Message(response_msg.into()),
         )
         .await
         .log_err()?;
@@ -544,27 +477,14 @@ pub async fn handle_display_most_played_menu_select(
         .page_limit(data.config.max_page_size)
         .build();
 
-    let paginate_info = paginator.pageinate_info()?;
-    let content =
-        helpers::make_display_title(helpers::PaginateType::MostPlayed, &paginate_info, None);
-    let paginate_ctrls =
-        helpers::make_paginate_controls(helpers::PaginateType::MostPlayed, &paginate_info, None);
-    let mut btn_grid: Vec<_> = paginator
-        .next_page()?
-        .chunks(5)
-        .map(helpers::make_action_row)
-        .collect();
-
-    btn_grid.push(paginate_ctrls);
+    let response_msg =
+        helpers::make_display_message(&mut paginator, helpers::DisplayType::MostPlayed, None)
+            .log_err()?;
 
     component
         .create_response(
             &ctx.http(),
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .content(content)
-                    .components(btn_grid),
-            ),
+            CreateInteractionResponse::Message(response_msg.into()),
         )
         .await
         .log_err()?;
@@ -599,7 +519,7 @@ pub async fn handle_play_random_btn(
                     CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
                             .content(format!("### Playing `{track_name}`..."))
-                            .components(helpers::make_soundbot_control_components()),
+                            .components(helpers::make_soundbot_control_components(None)),
                     ),
                 )
                 .await?;
@@ -617,7 +537,7 @@ pub async fn handle_play_random_btn(
                     CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
                             .content(format!("### No sounds present to play"))
-                            .components(helpers::make_soundbot_control_components()),
+                            .components(helpers::make_soundbot_control_components(None)),
                     ),
                 )
                 .await?;
@@ -635,9 +555,6 @@ pub async fn handle_search_btn(
     data: &UserData,
 ) -> PoiseResult {
     log::info!("Search button Pressed, creating search modal");
-
-    let channel_id = component.channel_id;
-
     let response = component
         .quick_modal(
             &ctx,
@@ -656,74 +573,30 @@ pub async fn handle_search_btn(
         .log_err()?;
 
     if let Some(response) = response {
-        response
-            .interaction
-            .create_response(&ctx.http(), CreateInteractionResponse::Acknowledge)
-            .await?;
-
         let inputs = response.inputs;
         let search = &inputs[0];
         let search = search.trim();
 
-        let mut paginator = db::AudioTablePaginatorBuilder::pinned_template(data.db_connection())
-            .page_limit(data.config.max_page_size)
-            .build();
+        let mut paginator =
+            db::AudioTablePaginatorBuilder::search_template(data.db_connection(), search)
+                .page_limit(data.config.max_page_size)
+                .build();
 
-        let paginate_info = paginator.pageinate_info()?;
-        let content = helpers::make_display_title(
-            helpers::PaginateType::Search,
-            &paginate_info,
+        let response_msg = helpers::make_display_message(
+            &mut paginator,
+            helpers::DisplayType::Search,
             Some(search.into()),
-        );
-        let paginate_ctrls = helpers::make_paginate_controls(
-            helpers::PaginateType::Search,
-            &paginate_info,
-            Some(search.into()),
-        );
-        let mut btn_grid: Vec<_> = paginator
-            .next_page()?
-            .chunks(5)
-            .map(helpers::make_action_row)
-            .collect();
+        )
+        .log_err()?;
 
-        btn_grid.push(paginate_ctrls);
-
-        component
+        response
+            .interaction
             .create_response(
                 &ctx.http(),
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content(content)
-                        .components(btn_grid),
-                ),
+                CreateInteractionResponse::UpdateMessage(response_msg.into()),
             )
             .await
             .log_err()?;
-
-        //
-        let paginator = AudioTablePaginatorBuilder::new(data.db_connection())
-            .fts_filter(Some(search.into()))
-            .page_limit(ACTION_ROWS_LIMIT)
-            .build();
-
-        check_msg(
-            channel_id
-                .send_message(
-                    &ctx.http(),
-                    CreateMessage::new().content(format!("### Search Results for `{search}`...")),
-                )
-                .await,
-        );
-
-        for audio_rows in paginator {
-            let audio_rows = audio_rows.log_err()?;
-
-            // ActionRows: Have a 5x5 grid limit
-            // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-            let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-            let builder = CreateMessage::new().components(btn_grid);
-            check_msg(channel_id.send_message(&ctx.http(), builder).await);
-        }
     } else {
         log::error!("Handle search button quick modal response was empty");
         return Ok(());

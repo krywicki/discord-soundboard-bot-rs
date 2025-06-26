@@ -1,12 +1,12 @@
-use poise::{CreateReply, Modal};
-use serenity::{all::CreateMessage, async_trait};
+use poise::Modal;
+use serenity::async_trait;
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
     audio,
     common::{LogResult, UserData},
     db::{self, audio_table::AudioTableRowInsertBuilder, Tags},
-    helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
+    helpers::{self, poise_check_msg, PoiseContextHelper, SongbirdHelper},
     vars,
 };
 
@@ -338,35 +338,34 @@ pub async fn display_sounds(
     log::info!("`/sounds display` slash command received");
 
     match search.as_ref() {
-        Some(value) => {
-            poise_check_msg(
-                ctx.reply(format!("Display searched sounds for `{value}`"))
-                    .await,
-            );
+        Some(search) => {
+            let mut paginator =
+                db::AudioTablePaginatorBuilder::search_template(ctx.data().db_connection(), search)
+                    .page_limit(ctx.data().config.max_page_size)
+                    .build();
 
-            let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
-                .fts_filter(search)
-                .page_limit(vars::ACTION_ROWS_LIMIT)
-                .build();
+            let reply_msg = helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::Search,
+                Some(search.clone()),
+            )?;
 
-            for audio_rows in paginator {
-                let audio_rows = audio_rows.log_err()?;
-
-                // ActionRows: Have a 5x5 grid limit
-                // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-                let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-                let builder = CreateMessage::new().components(btn_grid);
-                check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
-            }
+            ctx.send(reply_msg.into())
+                .await
+                .log_err_msg(format!("Failed replying `/sounds display: {search}`"))?;
         }
         None => {
-            let reply = ctx.reply_builder(
-                CreateReply::default()
-                    .content("**Soundbot Controls**")
-                    .components(helpers::make_soundbot_control_components()),
-            );
+            let mut paginator =
+                db::AudioTablePaginatorBuilder::all_template(ctx.data().db_connection())
+                    .page_limit(ctx.data().config.max_page_size)
+                    .build();
 
-            poise_check_msg(ctx.send(reply).await);
+            let reply_msg =
+                helpers::make_display_message(&mut paginator, helpers::DisplayType::All, None)?;
+
+            ctx.send(reply_msg.into())
+                .await
+                .log_err_msg("Failed replying `/sounds display`")?;
         }
     }
 

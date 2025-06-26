@@ -597,15 +597,6 @@ impl AudioTableOrderBy {
             Self::PlayCount(order) => format!("play_count {order}"),
         }
     }
-
-    pub fn inverse_order(&self) -> Self {
-        match self {
-            Self::CreatedAt(order) => Self::CreatedAt(order.inverse()),
-            Self::Id(order) => Self::Id(order.inverse()),
-            Self::Name(order) => Self::Name(order.inverse()),
-            Self::PlayCount(order) => Self::PlayCount(order.inverse()),
-        }
-    }
 }
 
 #[cfg(test)]

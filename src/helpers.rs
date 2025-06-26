@@ -2,15 +2,16 @@ use core::fmt;
 use std::num::ParseIntError;
 use std::sync::Arc;
 
+use poise::CreateReply;
 use serenity::all::{
-    ChannelId, CreateActionRow, CreateButton, CreateSelectMenuOption, GuildId, ReactionType,
+    ChannelId, CreateActionRow, CreateButton, CreateInteractionResponseMessage, CreateMessage,
+    CreateSelectMenuOption, GuildId, ReactionType,
 };
 use serenity::async_trait;
-use serenity::{all::Message, client::Context, Result as SerenityResult};
+use serenity::client::Context;
 use songbird::tracks::TrackHandle;
 use songbird::{Songbird, SongbirdKey};
 
-use crate::audio;
 use crate::audio::TrackHandleHelper;
 use crate::commands::{PoiseContext, PoiseError, PoiseResult};
 use crate::common::LogResult;
@@ -18,6 +19,7 @@ use crate::db::paginators::PaginateInfo;
 use crate::db::AudioTableRow;
 use crate::errors::AudioError;
 use crate::vars;
+use crate::{audio, db};
 
 pub async fn songbird_get(ctx: &Context) -> Arc<songbird::Songbird> {
     songbird::get(ctx)
@@ -31,13 +33,6 @@ pub async fn poise_songbird_get(ctx: &PoiseContext<'_>) -> Arc<songbird::Songbir
     data.get::<SongbirdKey>()
         .expect("Songbird voice client placed in at initialization")
         .clone()
-}
-
-/// check if message successfully sent, or log to error
-pub fn check_msg(result: SerenityResult<Message>) {
-    if let Err(err) = result {
-        log::error!("Error sending message: {:?}", err);
-    }
 }
 
 pub fn poise_check_msg(result: Result<poise::ReplyHandle, serenity::Error>) {
@@ -75,7 +70,7 @@ pub async fn get_bot_voice_channel_id(ctx: &Context, guild_id: GuildId) -> Optio
     voice_state.channel_id
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum DisplayMenuItemCustomId {
     DisplayAll,
     DisplayPinned,
@@ -124,14 +119,26 @@ impl From<DisplayMenuItemCustomId> for String {
 
 #[derive(Debug)]
 pub enum PaginateId {
+    RecentlyAddedFirstPage(u64),
+    RecentlyAddedLastPage(u64),
     RecentlyAddedNextPage(u64),
     RecentlyAddedPrevPage(u64),
+    AllFirstPage(u64),
+    AllLastPage(u64),
     AllNextPage(u64),
     AllPrevPage(u64),
+    MostPlayedFirstPage(u64),
+    MostPlayedLastPage(u64),
     MostPlayedNextPage(u64),
     MostPlayedPrevPage(u64),
+    SearchFirstPage(u64, String),
+    SearchLastPage(u64, String),
     SearchNextPage(u64, String),
     SearchPrevPage(u64, String),
+    PinnedFirstPage(u64),
+    PinnedLastPage(u64),
+    PinnedNextPage(u64),
+    PinnedPrevPage(u64),
     Unknown(String),
 }
 
@@ -148,20 +155,42 @@ impl TryFrom<&String> for PaginateId {
         };
 
         match parts[0] {
+            "recently_added_first_page" => Ok(PaginateId::RecentlyAddedFirstPage(parse_offset_fn(
+                parts[1],
+            )?)),
+            "recently_added_last_page" => Ok(PaginateId::RecentlyAddedLastPage(parse_offset_fn(
+                parts[1],
+            )?)),
             "recently_added_next_page" => Ok(PaginateId::RecentlyAddedNextPage(parse_offset_fn(
                 parts[1],
             )?)),
             "recently_added_prev_page" => Ok(PaginateId::RecentlyAddedPrevPage(parse_offset_fn(
                 parts[1],
             )?)),
+            "all_first_page" => Ok(PaginateId::AllFirstPage(parse_offset_fn(parts[1])?)),
+            "all_last_page" => Ok(PaginateId::AllLastPage(parse_offset_fn(parts[1])?)),
             "all_next_page" => Ok(PaginateId::AllNextPage(parse_offset_fn(parts[1])?)),
             "all_prev_page" => Ok(PaginateId::AllPrevPage(parse_offset_fn(parts[1])?)),
+            "most_played_first_page" => Ok(Self::MostPlayedFirstPage(parse_offset_fn(parts[1])?)),
+            "most_played_last_page" => Ok(Self::MostPlayedLastPage(parse_offset_fn(parts[1])?)),
             "most_played_next_page" => {
                 Ok(PaginateId::MostPlayedNextPage(parse_offset_fn(parts[1])?))
             }
             "most_played_prev_page" => {
                 Ok(PaginateId::MostPlayedPrevPage(parse_offset_fn(parts[1])?))
             }
+            "pinned_first_page" => Ok(PaginateId::PinnedFirstPage(parse_offset_fn(parts[1])?)),
+            "pinned_last_page" => Ok(PaginateId::PinnedLastPage(parse_offset_fn(parts[1])?)),
+            "pinned_next_page" => Ok(PaginateId::PinnedNextPage(parse_offset_fn(parts[1])?)),
+            "pinned_prev_page" => Ok(PaginateId::PinnedPrevPage(parse_offset_fn(parts[1])?)),
+            "search_first_page" => Ok(PaginateId::SearchFirstPage(
+                parse_offset_fn(parts[1])?,
+                parts[2..].join("").into(),
+            )),
+            "search_last_page" => Ok(PaginateId::SearchFirstPage(
+                parse_offset_fn(parts[1])?,
+                parts[2..].join("").into(),
+            )),
             "search_next_page" => Ok(PaginateId::SearchNextPage(
                 parse_offset_fn(parts[1])?,
                 parts[2..].join("").into(),
@@ -186,26 +215,41 @@ impl TryFrom<String> for PaginateId {
 impl From<&PaginateId> for String {
     fn from(value: &PaginateId) -> Self {
         match value {
+            PaginateId::AllFirstPage(val) => format!("all_first_page::{val}"),
+            PaginateId::AllLastPage(val) => format!("all_last_page::{val}"),
             PaginateId::AllNextPage(val) => format!("all_next_page::{val}"),
             PaginateId::AllPrevPage(val) => format!("all_prev_page::{val}"),
+            PaginateId::MostPlayedFirstPage(val) => format!("most_played_first_page::{val}"),
+            PaginateId::MostPlayedLastPage(val) => format!("most_played_last_page::{val}"),
             PaginateId::MostPlayedNextPage(val) => {
                 format!("most_played_next_page::{val}")
             }
             PaginateId::MostPlayedPrevPage(val) => {
                 format!("most_played_prev_page::{val}")
             }
+            PaginateId::RecentlyAddedFirstPage(val) => format!("recently_added_first_page::{val}"),
+            PaginateId::RecentlyAddedLastPage(val) => format!("recently_added_last_page::{val}"),
             PaginateId::RecentlyAddedNextPage(val) => {
                 format!("recently_added_next_page::{val}")
             }
             PaginateId::RecentlyAddedPrevPage(val) => {
                 format!("recently_added_prev_page::{val}")
             }
+            PaginateId::PinnedFirstPage(val) => format!("pinned_first_page::{val}"),
+            PaginateId::PinnedLastPage(val) => format!("pinned_last_page::{val}"),
+            PaginateId::PinnedNextPage(val) => format!("pinned_next_page::{val}"),
+            PaginateId::PinnedPrevPage(val) => format!("pinned_prev_page::{val}"),
+            PaginateId::SearchFirstPage(val, search) => {
+                format!("search_first_page::{val}::{search}")
+            }
+            PaginateId::SearchLastPage(val, search) => format!("search_last_page::{val}::{search}"),
             PaginateId::SearchNextPage(val, search) => {
                 format!("search_next_page::{val}::{search}")
             }
             PaginateId::SearchPrevPage(val, search) => {
                 format!("search_prev_page::{val}::{search}")
             }
+
             PaginateId::Unknown(val) => val.clone(),
         }
     }
@@ -442,8 +486,122 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
     CreateActionRow::Buttons(buttons)
 }
 
-pub fn make_soundbot_control_components() -> Vec<CreateActionRow> {
+pub struct SoundDisplayMessage {
+    content: String,
+    components: Vec<CreateActionRow>,
+}
+
+impl SoundDisplayMessage {
+    pub fn new(content: String, compnents: Vec<CreateActionRow>) -> Self {
+        Self {
+            content: content,
+            components: compnents,
+        }
+    }
+}
+
+impl Into<CreateInteractionResponseMessage> for SoundDisplayMessage {
+    fn into(self) -> CreateInteractionResponseMessage {
+        CreateInteractionResponseMessage::new()
+            .content(self.content)
+            .components(self.components)
+    }
+}
+
+impl Into<CreateMessage> for SoundDisplayMessage {
+    fn into(self) -> CreateMessage {
+        CreateMessage::new()
+            .content(self.content)
+            .components(self.components)
+    }
+}
+
+impl Into<CreateReply> for SoundDisplayMessage {
+    fn into(self) -> CreateReply {
+        CreateReply::default()
+            .content(self.content)
+            .components(self.components)
+    }
+}
+
+pub fn make_display_message(
+    paginator: &mut db::AudioTablePaginator,
+    display_type: DisplayType,
+    search: Option<String>,
+) -> Result<SoundDisplayMessage, String> {
+    let paginate_info: PaginateInfo = paginator.pageinate_info()?;
+
+    let title = make_display_title(display_type, &paginate_info, search.clone());
+    let btn_grid: Vec<_> = paginator
+        .next_page()?
+        .chunks(5)
+        .map(make_action_row)
+        .collect();
+    let paginate_ctrls = make_paginate_controls(display_type, &paginate_info, search.clone());
+
+    let sound_ctrls = if search.is_none() {
+        make_soundbot_control_components(Some(display_type.into()))
+    } else {
+        make_soundbot_control_components(None)
+    };
+
+    let mut components: Vec<_> = vec![];
+    components.extend(btn_grid);
+    components.push(paginate_ctrls);
+    components.extend(sound_ctrls);
+
+    Ok(SoundDisplayMessage::new(title, components))
+}
+
+pub fn make_soundbot_control_components(
+    default_selected_menu_item: Option<DisplayMenuItemCustomId>,
+) -> Vec<CreateActionRow> {
     vec![
+        CreateActionRow::SelectMenu(
+            serenity::builder::CreateSelectMenu::new(
+                DisplayMenuItemCustomId::CUSTOM_ID,
+                serenity::builder::CreateSelectMenuKind::String {
+                    options: vec![
+                        CreateSelectMenuOption::new(
+                            "All Sounds",
+                            DisplayMenuItemCustomId::DisplayAll,
+                        )
+                        .emoji(ReactionType::Unicode("📋".into()))
+                        .default_selection(
+                            default_selected_menu_item == Some(DisplayMenuItemCustomId::DisplayAll),
+                        ),
+                        CreateSelectMenuOption::new(
+                            "Pinned Sounds",
+                            DisplayMenuItemCustomId::DisplayPinned,
+                        )
+                        .emoji(ReactionType::Unicode("📋".into()))
+                        .default_selection(
+                            default_selected_menu_item
+                                == Some(DisplayMenuItemCustomId::DisplayPinned),
+                        ),
+                        CreateSelectMenuOption::new(
+                            "Recently Added Sounds",
+                            DisplayMenuItemCustomId::DisplayRecentlyAdded,
+                        )
+                        .emoji(ReactionType::Unicode("📋".into()))
+                        .default_selection(
+                            default_selected_menu_item
+                                == Some(DisplayMenuItemCustomId::DisplayRecentlyAdded),
+                        ),
+                        CreateSelectMenuOption::new(
+                            "Most Played Sounds",
+                            DisplayMenuItemCustomId::DisplayMostPlayed,
+                        )
+                        .emoji(ReactionType::Unicode("📋".into()))
+                        .default_selection(
+                            default_selected_menu_item
+                                == Some(DisplayMenuItemCustomId::DisplayMostPlayed),
+                        ),
+                    ],
+                },
+            )
+            .placeholder("Display Sounds"),
+        ),
         CreateActionRow::Buttons(vec![
             CreateButton::new(ButtonCustomId::Search)
                 .label("Search".to_string())
@@ -454,33 +612,6 @@ pub fn make_soundbot_control_components() -> Vec<CreateActionRow> {
                 .emoji(ReactionType::Unicode("🎵".into()))
                 .style(serenity::all::ButtonStyle::Secondary),
         ]),
-        CreateActionRow::SelectMenu(
-            serenity::builder::CreateSelectMenu::new(
-                DisplayMenuItemCustomId::CUSTOM_ID,
-                serenity::builder::CreateSelectMenuKind::String {
-                    options: vec![
-                        CreateSelectMenuOption::new("All", DisplayMenuItemCustomId::DisplayAll)
-                            .emoji(ReactionType::Unicode("📋".into())),
-                        CreateSelectMenuOption::new(
-                            "Pinned",
-                            DisplayMenuItemCustomId::DisplayPinned,
-                        )
-                        .emoji(ReactionType::Unicode("📋".into())),
-                        CreateSelectMenuOption::new(
-                            "Recently Added",
-                            DisplayMenuItemCustomId::DisplayRecentlyAdded,
-                        )
-                        .emoji(ReactionType::Unicode("📋".into())),
-                        CreateSelectMenuOption::new(
-                            "Most Played",
-                            DisplayMenuItemCustomId::DisplayMostPlayed,
-                        )
-                        .emoji(ReactionType::Unicode("📋".into())),
-                    ],
-                },
-            )
-            .placeholder("Display Sounds"),
-        ),
     ]
 }
 
@@ -511,37 +642,79 @@ pub fn uuid_v4_str() -> String {
     uuid.hyphenated().encode_lower(&mut encode_buf).to_string()
 }
 
-pub enum PaginateType {
+#[derive(Debug, Copy, Clone)]
+pub enum DisplayType {
     All,
     RecentlyAdded,
     MostPlayed,
     Pinned,
     Search,
 }
+
+impl From<DisplayType> for DisplayMenuItemCustomId {
+    fn from(value: DisplayType) -> Self {
+        match value {
+            DisplayType::All => DisplayMenuItemCustomId::DisplayAll,
+            DisplayType::MostPlayed => DisplayMenuItemCustomId::DisplayMostPlayed,
+            DisplayType::RecentlyAdded => DisplayMenuItemCustomId::DisplayRecentlyAdded,
+            DisplayType::Pinned => DisplayMenuItemCustomId::DisplayPinned,
+            DisplayType::Search => DisplayMenuItemCustomId::Unknown("".into()),
+        }
+    }
+}
+
+impl From<DisplayMenuItemCustomId> for DisplayType {
+    fn from(value: DisplayMenuItemCustomId) -> Self {
+        match value {
+            DisplayMenuItemCustomId::DisplayAll => Self::All,
+            DisplayMenuItemCustomId::DisplayMostPlayed => Self::MostPlayed,
+            DisplayMenuItemCustomId::DisplayRecentlyAdded => Self::RecentlyAdded,
+            DisplayMenuItemCustomId::DisplayPinned => Self::Pinned,
+            DisplayMenuItemCustomId::Unknown(_) => Self::All,
+        }
+    }
+}
+
 pub fn make_paginate_controls(
-    paginate_type: PaginateType,
+    display_type: DisplayType,
     paginate_info: &PaginateInfo,
     search: Option<String>,
 ) -> CreateActionRow {
-    let (prev_btn, next_btn) = match paginate_type {
-        PaginateType::All => {
-            let custom_id = ButtonCustomId::Paginate(PaginateId::AllPrevPage(
+    let (first_btn, prev_btn, next_btn, last_btn) = match display_type {
+        DisplayType::All => {
+            let first_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::AllFirstPage(
+                paginate_info.first_page_offset.unwrap_or(0),
+            )))
+            .disabled(paginate_info.first_page_offset.is_none());
+
+            let last_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::AllLastPage(
+                paginate_info.last_page_offset.unwrap_or(0),
+            )))
+            .disabled(paginate_info.last_page_offset.is_none());
+
+            let prev_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::AllPrevPage(
                 paginate_info.prev_page_offset.unwrap_or(0),
-            ));
-
-            let custom_id_str: String = custom_id.into();
-
-            let prev_btn =
-                CreateButton::new(custom_id_str).disabled(paginate_info.prev_page_offset.is_none());
+            )))
+            .disabled(paginate_info.prev_page_offset.is_none());
 
             let next_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::AllNextPage(
                 paginate_info.next_page_offset.unwrap_or(0),
             )))
             .disabled(paginate_info.next_page_offset.is_none());
 
-            (prev_btn, next_btn)
+            (first_btn, prev_btn, next_btn, last_btn)
         }
-        PaginateType::MostPlayed => {
+        DisplayType::MostPlayed => {
+            let first_btn = CreateButton::new(ButtonCustomId::Paginate(
+                PaginateId::MostPlayedFirstPage(paginate_info.first_page_offset.unwrap_or(0)),
+            ))
+            .disabled(paginate_info.first_page_offset.is_none());
+
+            let last_btn = CreateButton::new(ButtonCustomId::Paginate(
+                PaginateId::MostPlayedLastPage(paginate_info.last_page_offset.unwrap_or(0)),
+            ))
+            .disabled(paginate_info.last_page_offset.is_none());
+
             let prev_btn = CreateButton::new(ButtonCustomId::Paginate(
                 PaginateId::MostPlayedPrevPage(paginate_info.prev_page_offset.unwrap_or(0)),
             ))
@@ -552,9 +725,19 @@ pub fn make_paginate_controls(
             ))
             .disabled(paginate_info.next_page_offset.is_none());
 
-            (prev_btn, next_btn)
+            (first_btn, prev_btn, next_btn, last_btn)
         }
-        PaginateType::RecentlyAdded => {
+        DisplayType::RecentlyAdded => {
+            let first_btn = CreateButton::new(ButtonCustomId::Paginate(
+                PaginateId::RecentlyAddedFirstPage(paginate_info.first_page_offset.unwrap_or(0)),
+            ))
+            .disabled(paginate_info.first_page_offset.is_none());
+
+            let last_btn = CreateButton::new(ButtonCustomId::Paginate(
+                PaginateId::RecentlyAddedLastPage(paginate_info.last_page_offset.unwrap_or(0)),
+            ))
+            .disabled(paginate_info.last_page_offset.is_none());
+
             let prev_btn = CreateButton::new(ButtonCustomId::Paginate(
                 PaginateId::RecentlyAddedPrevPage(paginate_info.prev_page_offset.unwrap_or(0)),
             ))
@@ -565,23 +748,46 @@ pub fn make_paginate_controls(
             ))
             .disabled(paginate_info.next_page_offset.is_none());
 
-            (prev_btn, next_btn)
+            (first_btn, prev_btn, next_btn, last_btn)
         }
-        PaginateType::Pinned => {
-            let prev_btn = CreateButton::new(ButtonCustomId::Paginate(
-                PaginateId::MostPlayedPrevPage(paginate_info.prev_page_offset.unwrap_or(0)),
+        DisplayType::Pinned => {
+            let first_btn = CreateButton::new(ButtonCustomId::Paginate(
+                PaginateId::PinnedFirstPage(paginate_info.first_page_offset.unwrap_or(0)),
             ))
+            .disabled(paginate_info.first_page_offset.is_none());
+
+            let last_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::PinnedLastPage(
+                paginate_info.last_page_offset.unwrap_or(0),
+            )))
+            .disabled(paginate_info.last_page_offset.is_none());
+
+            let prev_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::PinnedPrevPage(
+                paginate_info.prev_page_offset.unwrap_or(0),
+            )))
             .disabled(paginate_info.prev_page_offset.is_none());
 
-            let next_btn = CreateButton::new(ButtonCustomId::Paginate(
-                PaginateId::MostPlayedNextPage(paginate_info.next_page_offset.unwrap_or(0)),
-            ))
+            let next_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::PinnedNextPage(
+                paginate_info.next_page_offset.unwrap_or(0),
+            )))
             .disabled(paginate_info.next_page_offset.is_none());
 
-            (prev_btn, next_btn)
+            (first_btn, prev_btn, next_btn, last_btn)
         }
-        PaginateType::Search => {
+        DisplayType::Search => {
             let search = search.unwrap_or("".into());
+
+            let first_btn =
+                CreateButton::new(ButtonCustomId::Paginate(PaginateId::SearchFirstPage(
+                    paginate_info.first_page_offset.unwrap_or(0),
+                    search.clone(),
+                )))
+                .disabled(paginate_info.first_page_offset.is_none());
+
+            let last_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::SearchLastPage(
+                paginate_info.last_page_offset.unwrap_or(0),
+                search.clone(),
+            )))
+            .disabled(paginate_info.last_page_offset.is_none());
 
             let prev_btn = CreateButton::new(ButtonCustomId::Paginate(PaginateId::SearchPrevPage(
                 paginate_info.prev_page_offset.unwrap_or(0),
@@ -595,43 +801,49 @@ pub fn make_paginate_controls(
             )))
             .disabled(paginate_info.next_page_offset.is_none());
 
-            (prev_btn, next_btn)
+            (first_btn, prev_btn, next_btn, last_btn)
         }
     };
 
+    let first_btn = first_btn
+        .style(serenity::all::ButtonStyle::Secondary)
+        .emoji(ReactionType::Unicode("⏮️".into()));
     let prev_btn = prev_btn
         .style(serenity::all::ButtonStyle::Secondary)
         .emoji(ReactionType::Unicode("◀️".into()));
     let next_btn = next_btn
         .style(serenity::all::ButtonStyle::Secondary)
         .emoji(ReactionType::Unicode("▶️".into()));
+    let last_btn = last_btn
+        .style(serenity::all::ButtonStyle::Secondary)
+        .emoji(ReactionType::Unicode("⏭️".into()));
 
-    CreateActionRow::Buttons(vec![prev_btn, next_btn])
+    CreateActionRow::Buttons(vec![first_btn, prev_btn, next_btn, last_btn])
 }
 
 pub fn make_display_title(
-    paginate_type: PaginateType,
+    display_type: DisplayType,
     paginate_info: &PaginateInfo,
     search: Option<String>,
 ) -> String {
     let cur_page = paginate_info.cur_page;
     let total_pages = paginate_info.total_pages;
 
-    match paginate_type {
-        PaginateType::All => format!("### All Sounds (page {cur_page} of {total_pages})..."),
-        PaginateType::MostPlayed => {
+    match display_type {
+        DisplayType::All => format!("### All Sounds (page {cur_page} of {total_pages})..."),
+        DisplayType::MostPlayed => {
             format!("### Most Played Sounds (page {cur_page} of {total_pages})...")
         }
-        PaginateType::RecentlyAdded => {
+        DisplayType::RecentlyAdded => {
             format!("### Recently Added Sounds (page {cur_page} of {total_pages})...")
         }
-        PaginateType::Search => {
+        DisplayType::Search => {
             format!(
                 "### Search Results `{}` (page {cur_page} of {total_pages})...",
                 search.unwrap_or(String::new())
             )
         }
-        PaginateType::Pinned => {
+        DisplayType::Pinned => {
             format!("### Pinned Sounds (page {cur_page} of {total_pages})...")
         }
     }
