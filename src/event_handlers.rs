@@ -621,6 +621,12 @@ pub async fn handle_search_btn(
             )
             .await
             .log_err()?;
+
+        component
+            .channel_id
+            .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+            .await
+            .log_err_msg("Failed sending soundbot controls")?;
     } else {
         log::error!("Handle search button quick modal response was empty");
         return Ok(());
