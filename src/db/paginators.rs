@@ -31,9 +31,10 @@ pub struct PaginateInfo {
 
 impl AudioTablePaginator {
     pub fn pageinate_info(&self) -> Result<PaginateInfo, String> {
+        let round_fn = |num: f64| (num + 0.5f64).floor();
         let row_count = self.row_count()?;
 
-        let total_pages = row_count / self.page_limit;
+        let total_pages = round_fn(row_count as f64 / self.page_limit as f64) as u64;
         let cur_page = if row_count > 0 {
             (self.offset / self.page_limit) + 1
         } else {
