@@ -369,6 +369,10 @@ pub async fn display_sounds(
         }
     }
 
+    ctx.send(helpers::make_sound_controls_message().into())
+        .await
+        .log_err_msg(format!("`/sounds display` failed sending sound controls"))?;
+
     Ok(())
 }
 

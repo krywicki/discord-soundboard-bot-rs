@@ -539,18 +539,25 @@ pub fn make_display_message(
         .collect();
     let paginate_ctrls = make_paginate_controls(display_type, &paginate_info, search.clone());
 
-    let sound_ctrls = if search.is_none() {
-        make_soundbot_control_components(Some(display_type.into()))
-    } else {
-        make_soundbot_control_components(None)
-    };
+    // let sound_ctrls = if search.is_none() {
+    //     make_soundbot_control_components(Some(display_type.into()))
+    // } else {
+    //     make_soundbot_control_components(None)
+    // };
 
     let mut components: Vec<_> = vec![];
     components.extend(btn_grid);
     components.push(paginate_ctrls);
-    components.extend(sound_ctrls);
+    //components.extend(sound_ctrls);
 
     Ok(SoundDisplayMessage::new(title, components))
+}
+
+pub fn make_sound_controls_message() -> SoundDisplayMessage {
+    SoundDisplayMessage::new(
+        "**Soundbot Controls**".into(),
+        make_soundbot_control_components(None),
+    )
 }
 
 pub fn make_soundbot_control_components(

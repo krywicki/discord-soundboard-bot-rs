@@ -46,7 +46,7 @@ impl AudioTablePaginator {
             Some(0)
         };
 
-        let last_page_offset = if cur_page == total_pages || row_count == 0 {
+        let last_page_offset = if total_pages == 0 || cur_page == total_pages || row_count == 0 {
             None
         } else {
             Some((total_pages - 1) * self.page_limit)

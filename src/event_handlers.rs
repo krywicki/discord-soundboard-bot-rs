@@ -404,6 +404,12 @@ pub async fn handle_display_all_menu_select(
         .await
         .log_err()?;
 
+    component
+        .channel_id
+        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .await
+        .log_err_msg("Failed sending soundbot controls")?;
+
     Ok(())
 }
 
@@ -431,6 +437,12 @@ pub async fn handle_display_pinned_menu_select(
         )
         .await
         .log_err()?;
+
+    component
+        .channel_id
+        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .await
+        .log_err_msg("Failed sending soundbot controls")?;
 
     Ok(())
 }
@@ -461,6 +473,12 @@ pub async fn handle_display_recently_added_menu_select(
         .await
         .log_err()?;
 
+    component
+        .channel_id
+        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .await
+        .log_err_msg("Failed sending soundbot controls")?;
+
     Ok(())
 }
 
@@ -488,6 +506,12 @@ pub async fn handle_display_most_played_menu_select(
         )
         .await
         .log_err()?;
+
+    component
+        .channel_id
+        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .await
+        .log_err_msg("Failed sending soundbot controls")?;
 
     Ok(())
 }
