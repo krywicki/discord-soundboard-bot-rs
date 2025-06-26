@@ -1,12 +1,12 @@
 [package]
 name = "soundboard-bot"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serenity = { version = "0.12.*" }
+serenity = { version = "0.12.*", features = ["builder", "utils"] }
 songbird = "0.5.*"
 tokio = { version = "1.45.*", features = ["full"] }
 symphonia = { version = "*", features = ["mp3"] }

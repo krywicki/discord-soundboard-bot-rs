@@ -20,8 +20,11 @@ pub struct AudioTableRow {
     pub author_name: Option<String>,
     #[allow(dead_code)]
     pub author_global_name: Option<String>,
+    #[allow(dead_code)]
     pub play_count: i64,
+    #[allow(dead_code)]
     pub last_played_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[allow(dead_code)]
     pub popularity: f64,
     pub pinned: bool,
 }
@@ -592,15 +595,6 @@ impl AudioTableOrderBy {
             Self::Id(order) => format!("id {order}"),
             Self::Name(order) => format!("name {order}"),
             Self::PlayCount(order) => format!("play_count {order}"),
-        }
-    }
-
-    pub fn inverse_order(&self) -> Self {
-        match self {
-            Self::CreatedAt(order) => Self::CreatedAt(order.inverse()),
-            Self::Id(order) => Self::Id(order.inverse()),
-            Self::Name(order) => Self::Name(order.inverse()),
-            Self::PlayCount(order) => Self::PlayCount(order.inverse()),
         }
     }
 }

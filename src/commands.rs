@@ -1,12 +1,12 @@
 use poise::Modal;
-use serenity::{all::CreateMessage, async_trait};
+use serenity::async_trait;
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
-    audio::{self, AudioFile, RemoveAudioFile},
+    audio,
     common::{LogResult, UserData},
-    db::{self, audio_table::AudioTableRowInsertBuilder, AudioTable, Tags},
-    helpers::{self, check_msg, poise_check_msg, PoiseContextHelper, SongbirdHelper},
+    db::{self, audio_table::AudioTableRowInsertBuilder, Tags},
+    helpers::{self, poise_check_msg, PoiseContextHelper, SongbirdHelper},
     vars,
 };
 
@@ -177,56 +177,6 @@ pub async fn sounds(_ctx: PoiseContext<'_>) -> PoiseResult {
     Ok(())
 }
 
-#[poise::command(prefix_command, guild_only)]
-pub async fn scan(ctx: PoiseContext<'_>) -> PoiseResult {
-    log::info!("Scanning audio files...");
-
-    let audio_validator = audio::AudioFileValidator::new()
-        .max_audio_duration(ctx.data().config.max_audio_file_duration);
-
-    let mut audio_files: Vec<AudioFile> = ctx
-        .data()
-        .read_audio_dir()
-        .into_iter()
-        .filter(|f| audio_validator.validate(f.as_path()).is_ok())
-        .collect();
-
-    let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection()).build();
-
-    // ignore audio files already in database
-    for page in paginator {
-        let page = page.log_err()?;
-        for row in page {
-            audio_files.remove_audio_file(&row.audio_file);
-        }
-    }
-
-    // add remaining audio files not in database
-    log::info!(
-        "Scan found {} audio files to add to databse",
-        audio_files.len()
-    );
-
-    let mut inserted = 0;
-    let table = AudioTable::new(ctx.data().db_connection());
-    for audio_file in audio_files {
-        let new_audio =
-            AudioTableRowInsertBuilder::new(audio_file.audio_title(), audio_file).build();
-
-        table
-            .insert_audio_row(new_audio)
-            .log_err()
-            .and_then(|_| {
-                inserted += 1;
-                Ok(())
-            })
-            .ok();
-    }
-
-    log::info!("Scan complete - added {inserted} new audio files");
-    Ok(())
-}
-
 #[poise::command(slash_command, prefix_command, guild_only)]
 pub async fn echo(
     ctx: PoiseContext<'_>,
@@ -385,41 +335,43 @@ pub async fn display_sounds(
     ctx: PoiseContext<'_>,
     #[description = "Filter displayed sounds by names & tags"] search: Option<String>,
 ) -> PoiseResult {
-    log::info!("List sounds buttons as ActionRows grid...");
+    log::info!("`/sounds display` slash command received");
 
     match search.as_ref() {
-        Some(value) => {
-            poise_check_msg(
-                ctx.reply(format!("Display searched sounds for `{value}`"))
-                    .await,
-            );
+        Some(search) => {
+            let mut paginator =
+                db::AudioTablePaginatorBuilder::search_template(ctx.data().db_connection(), search)
+                    .page_limit(ctx.data().config.max_page_size)
+                    .build();
 
-            let paginator = db::AudioTablePaginator::builder(ctx.data().db_connection())
-                .fts_filter(search)
-                .page_limit(vars::ACTION_ROWS_LIMIT)
-                .build();
+            let reply_msg = helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::Search,
+                Some(search.clone()),
+            )?;
 
-            for audio_rows in paginator {
-                let audio_rows = audio_rows.log_err()?;
-
-                // ActionRows: Have a 5x5 grid limit
-                // (https://discordjs.guide/message-components/action-rows.html#action-rows)
-                let btn_grid: Vec<_> = audio_rows.chunks(5).map(helpers::make_action_row).collect();
-                let builder = CreateMessage::new().components(btn_grid);
-                check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
-            }
+            ctx.send(reply_msg.into())
+                .await
+                .log_err_msg(format!("Failed replying `/sounds display: {search}`"))?;
         }
         None => {
-            poise_check_msg(ctx.reply("Displaying sounds...").await);
-            let markdown_content = "## Sound Display Options";
+            let mut paginator =
+                db::AudioTablePaginatorBuilder::all_template(ctx.data().db_connection())
+                    .page_limit(ctx.data().config.max_page_size)
+                    .build();
 
-            let builder = CreateMessage::new()
-                .content(markdown_content)
-                .components(vec![helpers::make_display_buttons()]);
+            let reply_msg =
+                helpers::make_display_message(&mut paginator, helpers::DisplayType::All, None)?;
 
-            check_msg(ctx.channel_id().send_message(&ctx.http(), builder).await);
+            ctx.send(reply_msg.into())
+                .await
+                .log_err_msg("Failed replying `/sounds display`")?;
         }
     }
+
+    ctx.send(helpers::make_sound_controls_message().into())
+        .await
+        .log_err_msg(format!("`/sounds display` failed sending sound controls"))?;
 
     Ok(())
 }
