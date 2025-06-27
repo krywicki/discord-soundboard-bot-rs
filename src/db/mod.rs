@@ -13,6 +13,8 @@ pub type DbConnection = r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionMana
 pub trait Table {
     fn connection(&self) -> &DbConnection;
     fn create_table(&self);
+    #[allow(unused)]
+    fn drop_table(&self);
 }
 
 #[derive(Debug)]

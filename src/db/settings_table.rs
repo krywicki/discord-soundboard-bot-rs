@@ -104,6 +104,26 @@ impl Table for SettingsTable {
         &self.conn
     }
 
+    fn drop_table(&self) {
+        let table_name = Self::TABLE_NAME;
+        log::info!("Dropping table: {table_name}");
+        let sql = format!(
+            "
+            DROP TABLE IF EXISTS {table_name} (
+                id INTEGER PRIMARY KEY,
+                join_audio VARCHAR(80),
+                leave_audio VARCHAR(80)
+            );
+        "
+        );
+
+        self.conn
+            .execute_batch(sql.as_str())
+            .log_err_msg("Failed dropping table")
+            .log_ok_msg(format!("Dropped table {table_name}"))
+            .unwrap();
+    }
+
     fn create_table(&self) {
         let table_name = Self::TABLE_NAME;
         log::info!("Creating table: {table_name}");

@@ -522,6 +522,35 @@ impl Table for AudioTable {
         &self.conn
     }
 
+    fn drop_table(&self) {
+        let table_name = Self::TABLE_NAME;
+        let fts5_table_name = Self::FTS5_TABLE_NAME;
+
+        log::info!("Dropping tables {table_name}, {fts5_table_name}...");
+
+        let sql = format!(
+            "
+            BEGIN;
+                DROP TABLE IF EXISTS {table_name};
+
+                DROP TABLE IF EXISTS {fts5_table_name};
+
+                DROP TRIGGER IF EXISTS {table_name}_insert;
+
+                DROP TRIGGER IF EXISTS {table_name}_delete;
+
+                DROP TRIGGER IF EXISTS {table_name}_update;
+            COMMIT;"
+        );
+
+        self.conn
+            .execute_batch(sql.as_str())
+            .log_err_msg(format!("Failed creating table:{table_name}"))
+            .unwrap();
+
+        log::info!("Created tables {table_name}, {fts5_table_name}!");
+    }
+
     fn create_table(&self) {
         let table_name = Self::TABLE_NAME;
         let fts5_table_name = Self::FTS5_TABLE_NAME;
