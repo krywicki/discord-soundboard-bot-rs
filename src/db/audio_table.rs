@@ -622,7 +622,7 @@ impl AudioTableOrderBy {
         match self {
             Self::CreatedAt(order) => format!("created_at {order}"),
             Self::Id(order) => format!("id {order}"),
-            Self::Name(order) => format!("name {order}"),
+            Self::Name(order) => format!("name COLLATE NOCASE {order}"),
             Self::PlayCount(order) => format!("play_count {order}"),
         }
     }

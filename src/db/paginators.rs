@@ -577,6 +577,72 @@ mod tests {
     }
 
     #[test]
+    fn audio_table_order_by_name_test() {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        let table = AudioTable::new(db_pool.get().unwrap());
+        table.create_table();
+
+        let mut names: Vec<String> = vec![
+            "abc01".into(),
+            "ABC03".into(),
+            "aBc02".into(),
+            "abC05".into(),
+            "aBC04".into(),
+        ];
+
+        let mut names_iter = names.iter();
+        let mut row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+            .order_by(AudioTableOrderBy::Name(db::Order::Asc))
+            .build();
+
+        let name_results: Vec<_> = paginator
+            .next_page()
+            .unwrap()
+            .iter()
+            .map(|row| row.name.clone())
+            .collect();
+
+        names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        assert_eq!(name_results, names);
+
+        let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+            .order_by(AudioTableOrderBy::Name(db::Order::Desc))
+            .build();
+
+        let name_results: Vec<_> = paginator
+            .next_page()
+            .unwrap()
+            .iter()
+            .map(|row| row.name.clone())
+            .collect();
+
+        names.reverse();
+
+        assert_eq!(name_results, names);
+    }
+
+    #[test]
     fn paginate_info_test() {
         let db_manager = SqliteConnectionManager::memory();
         let db_pool = r2d2::Pool::new(db_manager).unwrap();
