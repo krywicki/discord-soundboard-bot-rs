@@ -1,5 +1,5 @@
 use poise::Modal;
-use serenity::async_trait;
+use serenity::{all::CreateMessage, async_trait};
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
@@ -15,11 +15,6 @@ pub type PoiseError = GenericError;
 pub type PoiseContext<'a> = poise::Context<'a, UserData, PoiseError>;
 pub type PoiseResult = Result<(), PoiseError>;
 pub type PoiseAppContext<'a> = poise::ApplicationContext<'a, UserData, PoiseError>;
-
-#[poise::command(prefix_command, guild_only)]
-pub async fn deafen(_ctx: PoiseContext<'_>) -> PoiseResult {
-    Ok(())
-}
 
 #[poise::command(prefix_command, guild_only)]
 pub async fn ping(ctx: PoiseContext<'_>) -> PoiseResult {
@@ -70,6 +65,21 @@ pub async fn join(ctx: PoiseContext<'_>) -> PoiseResult {
             }
         }
     }
+
+    Ok(())
+}
+
+#[poise::command(prefix_command, guild_only, rename = "say")]
+pub async fn tts(
+    ctx: PoiseContext<'_>,
+    #[description = "Text to speak"] text: String,
+) -> PoiseResult {
+    log::info!("TTS command on text: {text}");
+
+    ctx.channel_id()
+        .send_message(&ctx.http(), CreateMessage::new().tts(true).content(text))
+        .await
+        .log_err_msg("Failed sending tts message")?;
 
     Ok(())
 }
@@ -356,14 +366,15 @@ pub async fn display_sounds(
                 .log_err_msg(format!("Failed replying `/sounds display: {search}`"))?;
         }
         None => {
-            let mut paginator =
-                db::AudioTablePaginatorBuilder::all_template(ctx.data().db_connection())
-                    .page_limit(ctx.data().config.max_page_size)
-                    .build();
+            let mut paginator = db::AudioTablePaginatorBuilder::most_recently_added_template(
+                ctx.data().db_connection(),
+            )
+            .page_limit(ctx.data().config.max_page_size)
+            .build();
 
             let reply_msg = helpers::make_display_message(
                 &mut paginator,
-                helpers::DisplayType::All,
+                helpers::DisplayType::RecentlyAdded,
                 None,
                 ctx.data().config.enable_ephemeral_controls,
             )?;
