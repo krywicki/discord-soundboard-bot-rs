@@ -1,13 +1,13 @@
 use serenity::all::{
-    CacheHttp, ComponentInteraction, ComponentInteractionDataKind, Context,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateQuickModal, FullEvent,
-    Interaction, VoiceState,
+    Attachment, CacheHttp, ComponentInteraction, ComponentInteractionDataKind, Context,
+    CreateActionRow, CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateMessage, CreateQuickModal, FullEvent, Interaction, Message, VoiceState,
 };
 
 use crate::{
     commands::PoiseResult,
     common::{LogResult, UserData},
-    db::{self, AudioTable, SettingsTable, Table},
+    db::{self, AudioTable, SettingsTable, Table, Tags},
     helpers::{self, ButtonCustomId, DisplayMenuItemCustomId, PaginateId, SongbirdHelper},
     FrameworkContext,
 };
@@ -27,6 +27,9 @@ pub async fn event_handler(
         }
         FullEvent::VoiceStateUpdate { old, new } => {
             handle_voice_state_update(ctx, old, new, framework, data).await?
+        }
+        FullEvent::Message { new_message } => {
+            handle_message(ctx, framework, data, new_message).await?
         }
         _ => {}
     }
@@ -57,6 +60,70 @@ pub async fn handle_ready(
 
     AudioTable::new(data.db_connection()).create_table();
     SettingsTable::new(data.db_connection()).create_table();
+
+    Ok(())
+}
+
+pub async fn handle_message(
+    _ctx: &Context,
+    _framework: FrameworkContext<'_>,
+    data: &UserData,
+    new_message: &Message,
+) -> PoiseResult {
+    // handle mp3 file
+
+    if let Some(attachment) = new_message.attachments.first() {
+        const DEFAULT_STR: String = String::new();
+        match attachment
+            .content_type
+            .as_ref()
+            .unwrap_or(&DEFAULT_STR)
+            .as_str()
+        {
+            "audio/mpeg" | "audio/mpeg3" | "x-mpeg-3" => {
+                if (attachment.size as u64) < crate::audio::MAX_AUDIO_FILE_LENGTH_BYTES {
+                    handle_attached_mp3_message(_ctx, _framework, data, new_message, &attachment)
+                        .await?
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn handle_attached_mp3_message(
+    ctx: &Context,
+    _framework: FrameworkContext<'_>,
+    _data: &UserData,
+    new_message: &Message,
+    mp3_attachment: &Attachment,
+) -> PoiseResult {
+    log::info!("handle mp3 attached file");
+
+    let msg = CreateMessage::new()
+        .content(format!(
+            "Do you want to add `{}` to soundbot?",
+            mp3_attachment.filename
+        ))
+        .components(vec![CreateActionRow::Buttons(vec![
+            CreateButton::new(ButtonCustomId::AddMp3File)
+                .label("Add To Soundbot")
+                .style(serenity::all::ButtonStyle::Secondary)
+                .emoji(serenity::all::ReactionType::Unicode("🎵".into())),
+            CreateButton::new(ButtonCustomId::IgnoreMp3File)
+                .label("Ignore")
+                .style(serenity::all::ButtonStyle::Secondary)
+                .emoji(serenity::all::ReactionType::Unicode("🛑".into())),
+        ])])
+        .reference_message(new_message);
+
+    new_message
+        .channel_id
+        .send_message(&ctx.http(), msg)
+        .await
+        .log_err_msg("Failed sending handle attached mp3 reply")?;
 
     Ok(())
 }
@@ -139,6 +206,16 @@ pub async fn handle_btn_interaction(
     log::debug!("Interaction Component Button pressed");
     let custom_id = &component.data.custom_id;
 
+    match custom_id.as_str() {
+        "soundbot_add_mp3_file" => {
+            log::info!("soundbot_add_mp3_file===> {:?}", component.message);
+        }
+        "soundbot_ignore_mp3_file" => {
+            log::info!("soundbot_ignore_mp3_file===> {:?}", component.message);
+        }
+        _ => {}
+    }
+
     let button_id = ButtonCustomId::try_from(custom_id)?;
     match button_id {
         ButtonCustomId::PlayAudio(audio_track_id) => {
@@ -154,6 +231,12 @@ pub async fn handle_btn_interaction(
 
         ButtonCustomId::Paginate(val) => {
             handle_paginate_btn(ctx, interaction, component, framework, data, val).await?;
+        }
+        ButtonCustomId::AddMp3File => {
+            handle_add_mp3_file_btn(ctx, interaction, component, framework, data).await?;
+        }
+        ButtonCustomId::IgnoreMp3File => {
+            handle_ignore_mp3_file_btn(ctx, interaction, component, framework, data).await?;
         }
         ButtonCustomId::Unknown(value) => {
             return Err(format!(
@@ -238,6 +321,195 @@ pub async fn handle_display_select_menu(
     Ok(())
 }
 
+pub async fn handle_add_mp3_file_btn(
+    ctx: &Context,
+    _interaction: &Interaction,
+    component: &ComponentInteraction,
+    _framework: FrameworkContext<'_>,
+    data: &UserData,
+) -> PoiseResult {
+    log::info!("Handle add MP3 file button");
+
+    let send_ref_msg_404_fn = async |msg: String| {
+        component
+            .create_response(
+                &ctx.http(),
+                CreateInteractionResponse::UpdateMessage(
+                    CreateInteractionResponseMessage::new()
+                        .content(msg)
+                        .components(vec![]),
+                ),
+            )
+            .await
+            .log_err()
+    };
+
+    let channel_id = component.channel_id;
+    let ref_message = if let Some(message_ref) = component.message.message_reference.as_ref() {
+        if let Some(message_id) = message_ref.message_id {
+            match channel_id.message(&ctx.http(), message_id).await {
+                Ok(message) => message,
+                Err(err) => {
+                    log::error!("{err}");
+                    send_ref_msg_404_fn(
+                        "Failed to locate referenced message with attached MP3 file".into(),
+                    )
+                    .await
+                    .log_err()?;
+
+                    return Ok(());
+                }
+            }
+        } else {
+            send_ref_msg_404_fn(
+                "Failed to locate referenced message with attached MP3 file".into(),
+            )
+            .await
+            .log_err()
+            .ok();
+
+            return Ok(());
+        }
+    } else {
+        send_ref_msg_404_fn("Failed to locate referenced message with attached MP3 file".into())
+            .await
+            .log_err()
+            .ok();
+
+        return Ok(());
+    };
+
+    // double check reference file attachment
+    let attachment = if let Some(attachment) = ref_message.attachments.get(0) {
+        const DEFAULT_STR: String = String::new();
+        match attachment
+            .content_type
+            .as_ref()
+            .unwrap_or(&DEFAULT_STR)
+            .as_str()
+        {
+            "audio/mpeg" | "audio/mpeg3" | "x-mpeg-3" => attachment,
+            unk_content_type => {
+                let err_str = format!("Invalid CONTENT-TYPE({unk_content_type}). Expected 'audio/mpeg', 'audio/mpeg3', or 'x-mpeg-3'");
+
+                component.create_response(&ctx.http(), CreateInteractionResponse::Message(CreateInteractionResponseMessage::new()
+                .content(err_str.clone())))
+                    .await.log_err_msg(format!("Failed to send response for unknown CONTENT-TYPE({unk_content_type}) for attached mp3 file message"))?;
+
+                return Err(err_str.into());
+            }
+        }
+    } else {
+        return Err("Could not locate file attachment".into());
+    };
+
+    // have user fill out 'add sound' modal
+    let response = component
+        .quick_modal(
+            &ctx,
+            CreateQuickModal::new("Add Sounds")
+                .field(
+                    serenity::builder::CreateInputText::new(
+                        serenity::all::InputTextStyle::Short,
+                        "Name",
+                        "sound_bot_sound_name_field",
+                    )
+                    .min_length(3)
+                    .max_length(80)
+                    .placeholder("Use The Force Luke"),
+                )
+                .field(
+                    serenity::builder::CreateInputText::new(
+                        serenity::all::InputTextStyle::Short,
+                        "Tags",
+                        "sound_bot_tags_field",
+                    )
+                    .max_length(1024)
+                    .placeholder("star wars new hope"),
+                ),
+        )
+        .await
+        .log_err()?;
+
+    let response = match response {
+        Some(resp) => resp,
+        None => return Ok(()),
+    };
+
+    // response
+    //     .interaction
+    //     .create_response(&ctx.http(), CreateInteractionResponse::Acknowledge)
+    //     .await
+    //     .log_err()?;
+
+    let sound_name = &response.inputs[0];
+    let sound_tags = Tags::from(response.inputs[1].clone());
+
+    let temp_audio_file = crate::audio::download_audio_url_temp(&attachment.url)
+        .await
+        .log_err()?;
+
+    crate::audio::AudioFileValidator::default()
+        .max_audio_duration(data.config.max_audio_file_duration)
+        .reject_uuid_files(false)
+        .validate(&temp_audio_file)
+        .log_err()?;
+
+    // add sound track to sounds dir & update audio_table
+    let audio_file = data.move_file_to_audio_dir(&temp_audio_file).log_err()?;
+    let table = data.audio_table();
+    table
+        .insert_audio_row(
+            db::audio_table::AudioTableRowInsertBuilder::new(sound_name.clone(), audio_file)
+                .author_global_name(component.user.global_name.clone())
+                .author_id(Some(component.user.id.into()))
+                .author_name(Some(component.user.name.clone()))
+                .tags(sound_tags)
+                .build(),
+        )
+        .log_err()?;
+
+    // update message to denote sound added
+    response
+        .interaction
+        .create_response(
+            &ctx.http(),
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content(format!("`{sound_name}` was added to soundbot!"))
+                    .components(vec![]),
+            ),
+        )
+        .await
+        .log_err()?;
+
+    Ok(())
+}
+
+pub async fn handle_ignore_mp3_file_btn(
+    ctx: &Context,
+    _interaction: &Interaction,
+    component: &ComponentInteraction,
+    _framework: FrameworkContext<'_>,
+    _data: &UserData,
+) -> PoiseResult {
+    log::info!("Handle ignore MP3 file button");
+
+    // update message to denote sound added
+    component
+        .create_response(
+            &ctx.http(),
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content(format!("Ignoring MP3 file. It was stupid anyway 😒"))
+                    .components(vec![]),
+            ),
+        )
+        .await
+        .log_err()?;
+    Ok(())
+}
+
 pub async fn handle_play_audio_btn(
     ctx: &Context,
     _interaction: &Interaction,
@@ -307,8 +579,13 @@ pub async fn handle_paginate_btn(
                 .offset(offset)
                 .build();
 
-            helpers::make_display_message(&mut paginator, helpers::DisplayType::All, None)
-                .log_err()?
+            helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::All,
+                None,
+                data.config.enable_ephemeral_controls,
+            )
+            .log_err()?
         }
         PaginateId::MostPlayedFirstPage(offset)
         | PaginateId::MostPlayedLastPage(offset)
@@ -319,8 +596,13 @@ pub async fn handle_paginate_btn(
                 .offset(offset)
                 .build();
 
-            helpers::make_display_message(&mut paginator, helpers::DisplayType::MostPlayed, None)
-                .log_err()?
+            helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::MostPlayed,
+                None,
+                data.config.enable_ephemeral_controls,
+            )
+            .log_err()?
         }
         PaginateId::RecentlyAddedFirstPage(offset)
         | PaginateId::RecentlyAddedLastPage(offset)
@@ -331,8 +613,13 @@ pub async fn handle_paginate_btn(
                 .offset(offset)
                 .build();
 
-            helpers::make_display_message(&mut paginator, helpers::DisplayType::RecentlyAdded, None)
-                .log_err()?
+            helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::RecentlyAdded,
+                None,
+                data.config.enable_ephemeral_controls,
+            )
+            .log_err()?
         }
         PaginateId::SearchFirstPage(offset, ref search)
         | PaginateId::SearchLastPage(offset, ref search)
@@ -347,6 +634,7 @@ pub async fn handle_paginate_btn(
                 &mut paginator,
                 helpers::DisplayType::Search,
                 Some(search.clone()),
+                data.config.enable_ephemeral_controls,
             )
             .log_err()?
         }
@@ -359,8 +647,13 @@ pub async fn handle_paginate_btn(
                 .offset(offset)
                 .build();
 
-            helpers::make_display_message(&mut paginator, helpers::DisplayType::Pinned, None)
-                .log_err()?
+            helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::Pinned,
+                None,
+                data.config.enable_ephemeral_controls,
+            )
+            .log_err()?
         }
         PaginateId::Unknown(val) => {
             return Err(format!(
@@ -393,8 +686,13 @@ pub async fn handle_display_all_menu_select(
         .page_limit(data.config.max_page_size)
         .build();
 
-    let response_msg =
-        helpers::make_display_message(&mut paginator, helpers::DisplayType::All, None).log_err()?;
+    let response_msg = helpers::make_display_message(
+        &mut paginator,
+        helpers::DisplayType::All,
+        None,
+        data.config.enable_ephemeral_controls,
+    )
+    .log_err()?;
 
     component
         .create_response(
@@ -405,8 +703,10 @@ pub async fn handle_display_all_menu_select(
         .log_err()?;
 
     component
-        .channel_id
-        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .create_followup(
+            &ctx.http(),
+            helpers::make_sound_controls_message(data.config.enable_ephemeral_controls).into(),
+        )
         .await
         .log_err_msg("Failed sending soundbot controls")?;
 
@@ -426,9 +726,13 @@ pub async fn handle_display_pinned_menu_select(
         .page_limit(data.config.max_page_size)
         .build();
 
-    let response_msg =
-        helpers::make_display_message(&mut paginator, helpers::DisplayType::Pinned, None)
-            .log_err()?;
+    let response_msg = helpers::make_display_message(
+        &mut paginator,
+        helpers::DisplayType::Pinned,
+        None,
+        data.config.enable_ephemeral_controls,
+    )
+    .log_err()?;
 
     component
         .create_response(
@@ -439,8 +743,10 @@ pub async fn handle_display_pinned_menu_select(
         .log_err()?;
 
     component
-        .channel_id
-        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .create_followup(
+            &ctx.http(),
+            helpers::make_sound_controls_message(data.config.enable_ephemeral_controls).into(),
+        )
         .await
         .log_err_msg("Failed sending soundbot controls")?;
 
@@ -461,9 +767,13 @@ pub async fn handle_display_recently_added_menu_select(
             .page_limit(data.config.max_page_size)
             .build();
 
-    let response_msg =
-        helpers::make_display_message(&mut paginator, helpers::DisplayType::RecentlyAdded, None)
-            .log_err()?;
+    let response_msg = helpers::make_display_message(
+        &mut paginator,
+        helpers::DisplayType::RecentlyAdded,
+        None,
+        data.config.enable_ephemeral_controls,
+    )
+    .log_err()?;
 
     component
         .create_response(
@@ -474,8 +784,10 @@ pub async fn handle_display_recently_added_menu_select(
         .log_err()?;
 
     component
-        .channel_id
-        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .create_followup(
+            &ctx.http(),
+            helpers::make_sound_controls_message(data.config.enable_ephemeral_controls).into(),
+        )
         .await
         .log_err_msg("Failed sending soundbot controls")?;
 
@@ -495,9 +807,13 @@ pub async fn handle_display_most_played_menu_select(
         .page_limit(data.config.max_page_size)
         .build();
 
-    let response_msg =
-        helpers::make_display_message(&mut paginator, helpers::DisplayType::MostPlayed, None)
-            .log_err()?;
+    let response_msg = helpers::make_display_message(
+        &mut paginator,
+        helpers::DisplayType::MostPlayed,
+        None,
+        data.config.enable_ephemeral_controls,
+    )
+    .log_err()?;
 
     component
         .create_response(
@@ -508,8 +824,10 @@ pub async fn handle_display_most_played_menu_select(
         .log_err()?;
 
     component
-        .channel_id
-        .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+        .create_followup(
+            &ctx.http(),
+            helpers::make_sound_controls_message(data.config.enable_ephemeral_controls).into(),
+        )
         .await
         .log_err_msg("Failed sending soundbot controls")?;
 
@@ -610,6 +928,7 @@ pub async fn handle_search_btn(
             &mut paginator,
             helpers::DisplayType::Search,
             Some(search.into()),
+            data.config.enable_ephemeral_controls,
         )
         .log_err()?;
 
@@ -623,8 +942,10 @@ pub async fn handle_search_btn(
             .log_err()?;
 
         component
-            .channel_id
-            .send_message(&ctx.http(), helpers::make_sound_controls_message().into())
+            .create_followup(
+                &ctx.http(),
+                helpers::make_sound_controls_message(data.config.enable_ephemeral_controls).into(),
+            )
             .await
             .log_err_msg("Failed sending soundbot controls")?;
     } else {
