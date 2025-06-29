@@ -19,6 +19,8 @@ pub struct Config {
     pub max_audio_file_duration: std::time::Duration,
     #[serde(default = "default_max_page_size")]
     pub max_page_size: u64,
+    #[serde(default = "default_enable_ephemeral_controls")]
+    pub enable_ephemeral_controls: bool,
 }
 
 impl Config {
@@ -81,8 +83,13 @@ impl Default for Config {
             sqlite_db_file: default_sqlite_db_file(),
             max_audio_file_duration: default_max_audio_file_duration(),
             max_page_size: default_max_page_size(),
+            enable_ephemeral_controls: default_enable_ephemeral_controls(),
         }
     }
+}
+
+fn default_enable_ephemeral_controls() -> bool {
+    true
 }
 
 fn default_max_page_size() -> u64 {

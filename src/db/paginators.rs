@@ -31,12 +31,10 @@ pub struct PaginateInfo {
 
 impl AudioTablePaginator {
     pub fn pageinate_info(&self) -> Result<PaginateInfo, String> {
-        let round_fn = |num: f64| (num + 0.5f64).floor();
         let row_count = self.row_count()?;
-
-        let total_pages = round_fn(row_count as f64 / self.page_limit as f64) as u64;
+        let total_pages = (row_count as f64 / self.page_limit as f64).ceil() as u64;
         let cur_page = if row_count > 0 {
-            (self.offset / self.page_limit) + 1
+            ((self.offset + 1) as f64 / self.page_limit as f64).ceil() as u64
         } else {
             0
         };
@@ -47,10 +45,10 @@ impl AudioTablePaginator {
             Some(0)
         };
 
-        let last_page_offset = if total_pages == 0 || cur_page == total_pages || row_count == 0 {
-            None
-        } else {
+        let last_page_offset = if total_pages > 1 && cur_page < total_pages {
             Some((total_pages - 1) * self.page_limit)
+        } else {
+            None
         };
 
         let prev_page_offset = if (self.offset as i64 - self.page_limit as i64) < 0 {
@@ -399,7 +397,7 @@ mod tests {
                 .unwrap();
         }
 
-        let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+        let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
             .page_limit(2)
             .build();
 
@@ -430,7 +428,7 @@ mod tests {
 
         // Test pagination with limit
         {
-            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
                 .page_limit(1)
                 .limit(Some(2))
                 .build();
@@ -449,7 +447,7 @@ mod tests {
 
         // Test pagination page_limit exceeds total limit
         {
-            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
                 .page_limit(5)
                 .limit(Some(3))
                 .build();
@@ -492,7 +490,7 @@ mod tests {
 
         // plain fts filter
         {
-            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
                 .page_limit(2)
                 .fts_filter(Some("star".into()))
                 .build();
@@ -510,7 +508,7 @@ mod tests {
 
         // fts edge case
         {
-            let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
                 .fts_filter(Some("asdfasdfasdfasdf".into()))
                 .build();
 
@@ -519,7 +517,7 @@ mod tests {
             let page = paginator.next();
             assert!(page.is_none());
 
-            paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+            paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
                 .fts_filter(Some("@''\"''\"@#$%^&*()!".into()))
                 .build();
 
@@ -562,7 +560,7 @@ mod tests {
         row.tags = "tag1".into();
         table.insert_audio_row(row).unwrap();
 
-        let mut paginator = AudioTablePaginator::builder(db_pool.get().unwrap())
+        let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
             .fts_filter(Some("tag1".into()))
             .page_limit(1)
             .offset(2)
@@ -576,5 +574,181 @@ mod tests {
 
         let page = paginator.next();
         assert!(page.is_none());
+    }
+
+    #[test]
+    fn audio_table_order_by_name_test() {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        let table = AudioTable::new(db_pool.get().unwrap());
+        table.create_table();
+
+        let mut names: Vec<String> = vec![
+            "abc01".into(),
+            "ABC03".into(),
+            "aBc02".into(),
+            "abC05".into(),
+            "aBC04".into(),
+        ];
+
+        let mut names_iter = names.iter();
+        let mut row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        row = make_audio_table_row_insert();
+        row.name = names_iter.next().unwrap().clone();
+        table.insert_audio_row(row).unwrap();
+
+        let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+            .order_by(AudioTableOrderBy::Name(db::Order::Asc))
+            .build();
+
+        let name_results: Vec<_> = paginator
+            .next_page()
+            .unwrap()
+            .iter()
+            .map(|row| row.name.clone())
+            .collect();
+
+        names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        assert_eq!(name_results, names);
+
+        let mut paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+            .order_by(AudioTableOrderBy::Name(db::Order::Desc))
+            .build();
+
+        let name_results: Vec<_> = paginator
+            .next_page()
+            .unwrap()
+            .iter()
+            .map(|row| row.name.clone())
+            .collect();
+
+        names.reverse();
+
+        assert_eq!(name_results, names);
+    }
+
+    #[test]
+    fn paginate_info_test() {
+        let db_manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::new(db_manager).unwrap();
+        let table = AudioTable::new(db_pool.get().unwrap());
+
+        // test paginate info
+        {
+            let page_limit = 3;
+            let target_row_count = (page_limit * 9) + 1;
+            table.create_table();
+
+            for _ in 0..target_row_count {
+                table
+                    .insert_audio_row(make_audio_table_row_insert())
+                    .unwrap();
+            }
+
+            let paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+                .page_limit(page_limit)
+                .build();
+
+            let info = paginator.pageinate_info().unwrap();
+
+            assert_eq!(info.page_limit, page_limit);
+            assert_eq!(info.total_row_count, target_row_count);
+            assert_eq!(info.total_pages, 10);
+            assert_eq!(info.first_page_offset, None);
+            assert_eq!(info.prev_page_offset, None);
+            assert_eq!(info.next_page_offset, Some(page_limit));
+            assert_eq!(info.last_page_offset, Some(9 * page_limit));
+            assert_eq!(info.cur_page, 1);
+
+            let paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+                .page_limit(page_limit)
+                .offset(6)
+                .build();
+
+            let info = paginator.pageinate_info().unwrap();
+
+            assert_eq!(info.page_limit, page_limit);
+            assert_eq!(info.total_row_count, target_row_count);
+            assert_eq!(info.total_pages, 10);
+            assert_eq!(info.first_page_offset, Some(0));
+            assert_eq!(info.prev_page_offset, Some(3));
+            assert_eq!(info.next_page_offset, Some(9));
+            assert_eq!(info.last_page_offset, Some(9 * page_limit));
+            assert_eq!(info.cur_page, 3);
+
+            let paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+                .page_limit(page_limit)
+                .offset(9 * page_limit)
+                .build();
+
+            let info = paginator.pageinate_info().unwrap();
+
+            assert_eq!(info.page_limit, page_limit);
+            assert_eq!(info.total_row_count, target_row_count);
+            assert_eq!(info.total_pages, 10);
+            assert_eq!(info.first_page_offset, Some(0));
+            assert_eq!(info.prev_page_offset, Some(24));
+            assert_eq!(info.next_page_offset, None);
+            assert_eq!(info.last_page_offset, None);
+            assert_eq!(info.cur_page, 10);
+        }
+
+        // test paginate info edge cases
+        {
+            table.drop_table();
+            table.create_table();
+
+            let page_limit = 3;
+            let paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+                .page_limit(page_limit)
+                .build();
+
+            let info = paginator.pageinate_info().unwrap();
+
+            assert_eq!(info.page_limit, page_limit);
+            assert_eq!(info.total_row_count, 0);
+            assert_eq!(info.total_pages, 0);
+            assert_eq!(info.first_page_offset, None);
+            assert_eq!(info.prev_page_offset, None);
+            assert_eq!(info.next_page_offset, None);
+            assert_eq!(info.last_page_offset, None);
+            assert_eq!(info.cur_page, 0);
+
+            for _ in 0..3 {
+                table
+                    .insert_audio_row(make_audio_table_row_insert())
+                    .unwrap();
+            }
+
+            let paginator = AudioTablePaginatorBuilder::new(db_pool.get().unwrap())
+                .page_limit(page_limit)
+                .build();
+
+            let info = paginator.pageinate_info().unwrap();
+
+            assert_eq!(info.page_limit, page_limit);
+            assert_eq!(info.total_row_count, 3);
+            assert_eq!(info.total_pages, 1);
+            assert_eq!(info.first_page_offset, None);
+            assert_eq!(info.prev_page_offset, None);
+            assert_eq!(info.next_page_offset, None);
+            assert_eq!(info.last_page_offset, None);
+            assert_eq!(info.cur_page, 1);
+        }
     }
 }

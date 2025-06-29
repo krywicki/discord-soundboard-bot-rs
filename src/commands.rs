@@ -348,6 +348,7 @@ pub async fn display_sounds(
                 &mut paginator,
                 helpers::DisplayType::Search,
                 Some(search.clone()),
+                ctx.data().config.enable_ephemeral_controls,
             )?;
 
             ctx.send(reply_msg.into())
@@ -360,8 +361,12 @@ pub async fn display_sounds(
                     .page_limit(ctx.data().config.max_page_size)
                     .build();
 
-            let reply_msg =
-                helpers::make_display_message(&mut paginator, helpers::DisplayType::All, None)?;
+            let reply_msg = helpers::make_display_message(
+                &mut paginator,
+                helpers::DisplayType::All,
+                None,
+                ctx.data().config.enable_ephemeral_controls,
+            )?;
 
             ctx.send(reply_msg.into())
                 .await
@@ -369,9 +374,11 @@ pub async fn display_sounds(
         }
     }
 
-    ctx.send(helpers::make_sound_controls_message().into())
-        .await
-        .log_err_msg(format!("`/sounds display` failed sending sound controls"))?;
+    ctx.send(
+        helpers::make_sound_controls_message(ctx.data().config.enable_ephemeral_controls).into(),
+    )
+    .await
+    .log_err_msg(format!("`/sounds display` failed sending sound controls"))?;
 
     Ok(())
 }

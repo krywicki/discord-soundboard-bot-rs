@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use poise::CreateReply;
 use serenity::all::{
-    ChannelId, CreateActionRow, CreateButton, CreateInteractionResponseMessage, CreateMessage,
-    CreateSelectMenuOption, GuildId, ReactionType,
+    ChannelId, CreateActionRow, CreateButton, CreateInteractionResponseFollowup,
+    CreateInteractionResponseMessage, CreateMessage, CreateSelectMenuOption, GuildId, ReactionType,
 };
 use serenity::async_trait;
 use serenity::client::Context;
@@ -274,6 +274,8 @@ pub enum ButtonCustomId {
     PlayRandom,
     Search,
     Paginate(PaginateId),
+    AddMp3File,
+    IgnoreMp3File,
     Unknown(String),
 }
 
@@ -296,6 +298,8 @@ impl TryFrom<&String> for ButtonCustomId {
             "sound_bot_paginate" => Ok(ButtonCustomId::Paginate(PaginateId::try_from(
                 parts[1..].join("::").to_string(),
             )?)),
+            "sound_bot_add_mp3_file" => Ok(ButtonCustomId::AddMp3File),
+            "sound_bot_ignore_mp3_file" => Ok(ButtonCustomId::IgnoreMp3File),
             _ => Ok(ButtonCustomId::Unknown(value.clone())),
         }
     }
@@ -316,6 +320,8 @@ impl From<ButtonCustomId> for String {
             ButtonCustomId::PlayRandom => format!("sound_bot_play_random"),
             ButtonCustomId::Search => format!("sound_bot_search"),
             ButtonCustomId::Paginate(val) => format!("sound_bot_paginate::{val}"),
+            ButtonCustomId::AddMp3File => format!("sound_bot_add_mp3_file"),
+            ButtonCustomId::IgnoreMp3File => format!("sound_bot_ignore_mp3_file"),
             ButtonCustomId::Unknown(val) => val,
         }
     }
@@ -489,13 +495,15 @@ pub fn make_action_row(audio_rows: &[AudioTableRow]) -> CreateActionRow {
 pub struct SoundDisplayMessage {
     content: String,
     components: Vec<CreateActionRow>,
+    ephemeral: bool,
 }
 
 impl SoundDisplayMessage {
-    pub fn new(content: String, compnents: Vec<CreateActionRow>) -> Self {
+    pub fn new(content: String, compnents: Vec<CreateActionRow>, ephemeral: bool) -> Self {
         Self {
             content: content,
             components: compnents,
+            ephemeral: ephemeral,
         }
     }
 }
@@ -505,6 +513,7 @@ impl Into<CreateInteractionResponseMessage> for SoundDisplayMessage {
         CreateInteractionResponseMessage::new()
             .content(self.content)
             .components(self.components)
+            .ephemeral(true)
     }
 }
 
@@ -521,6 +530,16 @@ impl Into<CreateReply> for SoundDisplayMessage {
         CreateReply::default()
             .content(self.content)
             .components(self.components)
+            .ephemeral(self.ephemeral)
+    }
+}
+
+impl Into<CreateInteractionResponseFollowup> for SoundDisplayMessage {
+    fn into(self) -> CreateInteractionResponseFollowup {
+        CreateInteractionResponseFollowup::default()
+            .content(self.content)
+            .components(self.components)
+            .ephemeral(self.ephemeral)
     }
 }
 
@@ -528,6 +547,7 @@ pub fn make_display_message(
     paginator: &mut db::AudioTablePaginator,
     display_type: DisplayType,
     search: Option<String>,
+    ephemeral: bool,
 ) -> Result<SoundDisplayMessage, String> {
     let paginate_info: PaginateInfo = paginator.pageinate_info()?;
 
@@ -539,24 +559,18 @@ pub fn make_display_message(
         .collect();
     let paginate_ctrls = make_paginate_controls(display_type, &paginate_info, search.clone());
 
-    // let sound_ctrls = if search.is_none() {
-    //     make_soundbot_control_components(Some(display_type.into()))
-    // } else {
-    //     make_soundbot_control_components(None)
-    // };
-
     let mut components: Vec<_> = vec![];
     components.extend(btn_grid);
     components.push(paginate_ctrls);
-    //components.extend(sound_ctrls);
 
-    Ok(SoundDisplayMessage::new(title, components))
+    Ok(SoundDisplayMessage::new(title, components, ephemeral))
 }
 
-pub fn make_sound_controls_message() -> SoundDisplayMessage {
+pub fn make_sound_controls_message(ephemeral: bool) -> SoundDisplayMessage {
     SoundDisplayMessage::new(
         "**Soundbot Controls**".into(),
         make_soundbot_control_components(None),
+        ephemeral,
     )
 }
 

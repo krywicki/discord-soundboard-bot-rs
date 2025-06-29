@@ -255,6 +255,8 @@ pub fn probe_audio_track(audio_file: impl AsRef<path::Path>) -> Result<AudioTrac
     })
 }
 
+pub const MAX_AUDIO_FILE_LENGTH_BYTES: u64 = 2_000_000; //2MB
+
 /// download audio url to temp dir (audio file is uuid4 name)
 pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathBuf, PoiseError> {
     let url = url.as_ref();
@@ -272,7 +274,7 @@ pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathB
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
-        .unwrap();
+        .ok_or("Unable to determine CONTENT-TYPE in for url")?;
 
     match content_type.to_str().unwrap_or("") {
         "audio/mpeg" | "audio/mpeg3" | "x-mpeg-3" => {}
@@ -282,6 +284,25 @@ pub async fn download_audio_url_temp(url: impl AsRef<str>) -> Result<path::PathB
             )
             .log_err();
         }
+    }
+
+    // Ensure content size
+    let content_length = response
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .ok_or("Unable to determine CONTENT-LENGTH for url")
+        .log_err()?
+        .to_str()
+        .log_err()?
+        .parse::<u64>()
+        .log_err()?;
+
+    if content_length > MAX_AUDIO_FILE_LENGTH_BYTES {
+        return Err(format!(
+            "CONTENT-LENGTH({content_length}) exceeds max bytes length of {MAX_AUDIO_FILE_LENGTH_BYTES}"
+        )
+        .into())
+        .log_err();
     }
 
     let uuid = helpers::uuid_v4_str();
