@@ -56,7 +56,6 @@ async fn main() -> anyhow::Result<()> {
                     commands::leave(),
                     commands::sounds(),
                     commands::play(),
-                    commands::tts(),
                     commands::register(),
                 ],
                 event_handler: |ctx, event, framework, data| {

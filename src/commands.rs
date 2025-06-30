@@ -1,5 +1,5 @@
 use poise::Modal;
-use serenity::{all::CreateMessage, async_trait};
+use serenity::async_trait;
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 
 use crate::{
@@ -65,21 +65,6 @@ pub async fn join(ctx: PoiseContext<'_>) -> PoiseResult {
             }
         }
     }
-
-    Ok(())
-}
-
-#[poise::command(prefix_command, guild_only, rename = "say")]
-pub async fn tts(
-    ctx: PoiseContext<'_>,
-    #[description = "Text to speak"] text: String,
-) -> PoiseResult {
-    log::info!("TTS command on text: {text}");
-
-    ctx.channel_id()
-        .send_message(&ctx.http(), CreateMessage::new().tts(true).content(text))
-        .await
-        .log_err_msg("Failed sending tts message")?;
 
     Ok(())
 }
