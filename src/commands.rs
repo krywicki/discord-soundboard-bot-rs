@@ -17,11 +17,6 @@ pub type PoiseResult = Result<(), PoiseError>;
 pub type PoiseAppContext<'a> = poise::ApplicationContext<'a, UserData, PoiseError>;
 
 #[poise::command(prefix_command, guild_only)]
-pub async fn deafen(_ctx: PoiseContext<'_>) -> PoiseResult {
-    Ok(())
-}
-
-#[poise::command(prefix_command, guild_only)]
 pub async fn ping(ctx: PoiseContext<'_>) -> PoiseResult {
     poise_check_msg(ctx.say("pong!").await);
     Ok(())
@@ -356,14 +351,15 @@ pub async fn display_sounds(
                 .log_err_msg(format!("Failed replying `/sounds display: {search}`"))?;
         }
         None => {
-            let mut paginator =
-                db::AudioTablePaginatorBuilder::all_template(ctx.data().db_connection())
-                    .page_limit(ctx.data().config.max_page_size)
-                    .build();
+            let mut paginator = db::AudioTablePaginatorBuilder::most_recently_added_template(
+                ctx.data().db_connection(),
+            )
+            .page_limit(ctx.data().config.max_page_size)
+            .build();
 
             let reply_msg = helpers::make_display_message(
                 &mut paginator,
-                helpers::DisplayType::All,
+                helpers::DisplayType::RecentlyAdded,
                 None,
                 ctx.data().config.enable_ephemeral_controls,
             )?;
