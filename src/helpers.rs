@@ -645,12 +645,13 @@ pub async fn autocomplete_audio_track_name<'a>(
     futures::stream::iter(track_names)
 }
 
-pub async fn autocomplete_opt_audio_track_name<'a>(
+pub async fn autocomplete_join_leave_audio_track_name<'a>(
     ctx: PoiseContext<'_>,
     partial: &'a str,
 ) -> impl futures::stream::Stream<Item = String> + 'a {
     let table = ctx.data().audio_table();
     let mut track_names = table.fts_autocomplete_track_names(partial, Some(5));
+    track_names.insert(0, "RANDOM".into());
     track_names.insert(0, "NONE".into());
 
     futures::stream::iter(track_names)

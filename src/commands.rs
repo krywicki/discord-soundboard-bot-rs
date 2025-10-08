@@ -48,11 +48,16 @@ pub async fn join(ctx: PoiseContext<'_>) -> PoiseResult {
     if let Ok(settings) = ctx.data().settings_table().get_settings().log_err() {
         if let Some(ref join_audio) = settings.join_audio {
             log::info!("Detected join audio: {join_audio}. Attempting to play.");
-            match ctx
-                .data()
-                .audio_table()
-                .find_audio_row(db::UniqueAudioTableCol::Name(join_audio.clone()))
-            {
+
+            let row = if "RANDOM" == join_audio.to_uppercase() {
+                ctx.data().audio_table().get_random_row().log_err()?
+            } else {
+                ctx.data()
+                    .audio_table()
+                    .find_audio_row(db::UniqueAudioTableCol::Name(join_audio.clone()))
+            };
+
+            match row {
                 Some(row) => {
                     log::debug!("bot join audio playing: {}", row.name);
                     manager
@@ -85,11 +90,16 @@ pub async fn leave(ctx: PoiseContext<'_>) -> PoiseResult {
             if let Ok(settings) = ctx.data().settings_table().get_settings().log_err() {
                 if let Some(ref leave_audio) = settings.leave_audio {
                     log::info!("Detected leave audio: {leave_audio}. Attempting to play.");
-                    match ctx
-                        .data()
-                        .audio_table()
-                        .find_audio_row(db::UniqueAudioTableCol::Name(leave_audio.clone()))
-                    {
+
+                    let row = if "RANDOM" == leave_audio.to_uppercase() {
+                        ctx.data().audio_table().get_random_row().log_err()?
+                    } else {
+                        ctx.data()
+                            .audio_table()
+                            .find_audio_row(db::UniqueAudioTableCol::Name(leave_audio.clone()))
+                    };
+
+                    match row {
                         Some(row) => {
                             log::debug!("bot leave audio playing: {}", row.name);
                             manager
@@ -441,7 +451,7 @@ pub async fn set_join_audio(
     ctx: PoiseContext<'_>,
     #[description = "Audio track name"]
     #[rename = "track"]
-    #[autocomplete = "helpers::autocomplete_opt_audio_track_name"]
+    #[autocomplete = "helpers::autocomplete_join_leave_audio_track_name"]
     audio_track_name: String,
 ) -> PoiseResult {
     log::info!("Setting join audio: {audio_track_name:?}");
@@ -454,6 +464,11 @@ pub async fn set_join_audio(
             settings.join_audio = None;
             table.update_settings(&settings).log_err()?;
             poise_check_msg(ctx.reply(format!("Bot join audio disabled")).await);
+        }
+        "RANDOM" => {
+            settings.join_audio = Some("RANDOM".into());
+            table.update_settings(&settings).log_err()?;
+            poise_check_msg(ctx.reply(format!("Bot join audio randomized")).await);
         }
         val => {
             settings.join_audio = Some(val.into());
@@ -469,7 +484,7 @@ pub async fn set_leave_audio(
     ctx: PoiseContext<'_>,
     #[description = "Audio track name"]
     #[rename = "track"]
-    #[autocomplete = "helpers::autocomplete_opt_audio_track_name"]
+    #[autocomplete = "helpers::autocomplete_join_leave_audio_track_name"]
     audio_track_name: String,
 ) -> PoiseResult {
     log::info!("Setting leave audio: {audio_track_name:?}");
@@ -482,6 +497,11 @@ pub async fn set_leave_audio(
             settings.leave_audio = None;
             table.update_settings(&settings).log_err()?;
             poise_check_msg(ctx.reply(format!("Bot leave audio disabled")).await);
+        }
+        "RANDOM" => {
+            settings.leave_audio = Some("RANDOM".into());
+            table.update_settings(&settings).log_err()?;
+            poise_check_msg(ctx.reply(format!("Bot leave audio randomized")).await);
         }
         val => {
             settings.leave_audio = Some(val.into());
