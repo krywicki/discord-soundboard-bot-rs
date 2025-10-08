@@ -526,14 +526,6 @@ Bot for playing sounds in voice chat.
     Ok(())
 }
 
-#[derive(Debug, poise::ChoiceParameter)]
-pub enum Date {
-    #[name = "Recent"]
-    Date,
-    #[name = "Latest"]
-    DateReverse,
-}
-
 struct TrackErrorNotifier;
 
 #[async_trait]

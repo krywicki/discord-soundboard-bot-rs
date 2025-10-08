@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
 use std::ops::Deref;
@@ -45,18 +44,6 @@ pub trait TrackHandleHelper {
 impl TrackHandleHelper for TrackHandle {
     async fn wait_for_end(&self) {
         wait_for_audio_track_end(&self).await;
-    }
-}
-
-pub struct AudioDir(path::PathBuf);
-
-impl IntoIterator for AudioDir {
-    type Item = AudioFile;
-    type IntoIter = AudioDirIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let entries = fs::read_dir(&self.0).expect("Failed to fs::read_dir for AudioDir");
-        AudioDirIter(entries.into_iter())
     }
 }
 
@@ -118,22 +105,6 @@ impl AudioFileValidator {
         }
 
         Ok(())
-    }
-}
-
-pub struct AudioDirIter(fs::ReadDir);
-
-impl std::iter::Iterator for AudioDirIter {
-    type Item = AudioFile;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let it = &mut self.0;
-
-        it.filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().is_file())
-            .filter(|entry| entry.path().extension().unwrap_or(OsStr::new("")) == "mp3")
-            .map(|e| AudioFile(e.path()))
-            .next()
     }
 }
 

@@ -146,13 +146,3 @@ where
         self
     }
 }
-
-#[derive(Debug, poise::Modal)]
-#[name = "Search Sound"]
-pub struct SearchSoundModal {
-    #[name = "Search"] // Field name by default
-    #[placeholder = "star wars anakin"] // No placeholder by default
-    #[min_length = 3] // No length restriction by default (so, 1-4000 chars)
-    #[max_length = 80] // Same as max button label len (crate::vars::BTN_LABEL_MAX_LEN)
-    name: String,
-}
