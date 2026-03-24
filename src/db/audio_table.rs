@@ -15,7 +15,7 @@ pub struct AudioTableRow {
     #[allow(dead_code)]
     pub created_at: chrono::DateTime<chrono::Utc>,
     #[allow(dead_code)]
-    pub author_id: Option<u64>,
+    pub author_id: Option<i64>,
     #[allow(dead_code)]
     pub author_name: Option<String>,
     #[allow(dead_code)]
@@ -150,7 +150,7 @@ pub struct AudioTableRowInsert {
     pub tags: Tags,
     pub audio_file: audio::AudioFile,
     pub created_at: chrono::DateTime<chrono::Utc>,
-    pub author_id: Option<u64>,
+    pub author_id: Option<i64>,
     pub author_name: Option<String>,
     pub author_global_name: Option<String>,
     pub play_count: i64,
@@ -205,7 +205,7 @@ impl AudioTableRowInsertBuilder {
         self
     }
 
-    pub fn author_id(mut self, author_id: Option<u64>) -> Self {
+    pub fn author_id(mut self, author_id: Option<i64>) -> Self {
         self.row_insert.author_id = author_id;
         self
     }
