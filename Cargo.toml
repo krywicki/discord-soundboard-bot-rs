@@ -1,32 +1,44 @@
 [package]
 name = "soundboard-bot"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# temporary path to fix 'E2EE/DAVE protocol required' error
+[patch.crates-io]
+songbird = { git = "https://github.com/beerpsi-forks/songbird", branch = "davey" }
+
 [dependencies]
-serenity = { version = "0.12.*", features = ["builder", "utils"] }
-songbird = "0.5.*"
-tokio = { version = "1.47.*", features = ["full"] }
-symphonia = { version = "*", features = ["mp3"] }
+songbird = {version = "^0.5", features = ["serenity"]}
+# crate version unification dictated by `songbird`
+#   `cargo tree -i serenity` for more info
+serenity = { version = "*", default-features = false, features = ["builder", "utils", "rustls_backend", "default_no_backend"] }
+# crate version unification dictated by [`poise`,`songbird`]
+#   `cargo tree -i reqwest` for more info
+reqwest = { version = "^0.12", default-features = false }
+# rusttls cryto provider needs to be set manually otherwise songbird connection panics
+# crate version unified with ['serenity']
+#   `cargo tree -i rustls` for more info
+rustls = { version = "^0.23", default-features = false, features = ["logging", "prefer-post-quantum", "std", "tls12", "aws-lc-rs"] }
+tokio = { version = "1.50.0", features = ["full"] }
+symphonia = { version = "0.5.5", features = ["mp3"] }
 dotenv = { version = "*" }
-anyhow = { version = "1.0.*" }
-log = { version = "0.4.27" }
-env_logger = { version = "0.11.*" }
-reqwest = { version = "0.12.20" }
-openssl = { version = "0.10.*", features = ["vendored"] }
+anyhow = { version = "1.0.102" }
+log = { version = "0.4.29" }
+env_logger = { version = "0.11.9" }
+openssl = { version = "0.10.75", features = ["vendored"] }
 r2d2 = "0.8.*"
-r2d2_sqlite = "0.30.0"
-rusqlite = { version = "0.36.0", features = [
+r2d2_sqlite = "0.32.0"
+rusqlite = { version = "0.38.0", features = [
     "chrono",
     "bundled",
 ] } # identical to r2d2_sqlite rusqlite version, to enable chrono feature
-chrono = "0.4.*"
+chrono = { version = "^0.4", features = ["default"] }
 poise = "0.6.1"
-config = "0.15.*"
-thiserror = "2.0.*"
+config = "^0.15"
+thiserror = "2.0.18"
 serde = { version = "1.0.*", features = ["derive"] }
-regex = "1.11.*"
-futures = "0.3.*"
-uuid = "1.18.*"
+regex = "1.12.3"
+futures = "0.3.32"
+uuid = "1.22.0"

@@ -31,7 +31,7 @@ pub struct PaginateInfo {
 
 impl AudioTablePaginator {
     pub fn pageinate_info(&self) -> Result<PaginateInfo, String> {
-        let row_count = self.row_count()?;
+        let row_count = self.row_count()? as u64;
         let total_pages = (row_count as f64 / self.page_limit as f64).ceil() as u64;
         let cur_page = if row_count > 0 {
             ((self.offset + 1) as f64 / self.page_limit as f64).ceil() as u64
@@ -75,7 +75,7 @@ impl AudioTablePaginator {
         })
     }
 
-    pub fn row_count(&self) -> Result<u64, String> {
+    pub fn row_count(&self) -> Result<i64, String> {
         let conn = &self.conn;
         let audio_table_name = AudioTable::TABLE_NAME;
         let fts_table_name = AudioTable::FTS5_TABLE_NAME;
@@ -134,7 +134,7 @@ impl AudioTablePaginator {
             .prepare(sql.as_ref())
             .expect("Failed to prepare sql stmt");
 
-        let count: u64 = stmt
+        let count: i64 = stmt
             .query_row(params.as_slice(), |row| row.get(0))
             .map_err(|err| format!("Error counting in AudioTablePaginator - {err}"))?;
 

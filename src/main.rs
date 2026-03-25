@@ -32,6 +32,10 @@ type FrameworkContext<'a> = poise::FrameworkContext<'a, UserData, PoiseError>;
 async fn main() -> anyhow::Result<()> {
     println!("Application starting...");
 
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Couldn't set rustls default crypt provider");
+
     let config = Config::new();
     env_logger::init();
 
@@ -61,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
                 event_handler: |ctx, event, framework, data| {
                     Box::pin(event_handlers::event_handler(ctx, event, framework, data))
                 },
+
                 ..Default::default()
             })
             .setup(|_ctx, _ready, _framework| {
